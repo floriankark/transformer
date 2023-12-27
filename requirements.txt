@@ -1,4 +1,3 @@
-pytorch==2.1.1
-pytest==7.4.3
-datasets==2.12.0
-numpy==1.26.2
+torch
+pytest
+datasets
