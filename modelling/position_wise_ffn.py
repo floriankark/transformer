@@ -12,7 +12,4 @@ class PositionWiseFFN(nn.Module):
         )
 
     def forward(self, x):
-        """
-        x: (batch_size, seq_len, d_model)
-        """
         return self.ffn(x)
