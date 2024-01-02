@@ -2,13 +2,20 @@ import torch
 import torch.nn as nn
 
 """
-def positional_encoding(seq_len, d_model):
-    pos = torch.arange(0, seq_len).unsqueeze(1)
-    i = torch.arange(0, d_model, 2)
-    pe = pos / torch.pow(10000, i / d_model)
-    pe[:, 0::2] = torch.sin(pe[:, 0::2])
-    pe[:, 1::2] = torch.cos(pe[:, 1::2])
-    return pe
+# naive implementation
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, seq_len):
+        super().__init__()
+        pe = torch.zeros(1, seq_len, d_model)
+        x = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1) / torch.pow(
+            10000, torch.arange(0, d_model, 2, dtype=torch.float32) / d_model
+        )
+        pe[:, :, 0::2] = torch.sin(x)
+        pe[:, :, 1::2] = torch.cos(x)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        return x + self.pe[:, : x.size(1), :]
 """
 
 
