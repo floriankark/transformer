@@ -14,9 +14,9 @@ def positional_encoding(seq_len, d_model):
 
 # more efficient
 class PositionalEncoding(nn.Module):
-    def __init__(self, seq_len, d_model):
+    def __init__(self, d_model, seq_len):
         super().__init__()
-        pe = self.torch.zeros(1, seq_len, d_model)  # one uniform pe for all batches
+        pe = torch.zeros(1, seq_len, d_model)  # one uniform pe for all batches
         pos = torch.arange(0, seq_len).unsqueeze(1)
         # 1/10000^(2*i/d_model) -> 10000^(-2*i/d_model) -> exp(log(10000^(-2*i/d_model))) -> exp(2*i*(-log(10000))/d_model)
         div_term = torch.exp(
