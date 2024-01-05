@@ -95,6 +95,7 @@ class MultiHeadAttention(nn.Module):
         return self.output_transform(attention)
 
 
+"""
 class PositionWiseFFN(nn.Module):
     def __init__(self, d_model, dim_feedforward):
         super().__init__()
@@ -117,3 +118,4 @@ class AddNorm(nn.Module):
 
     def forward(self, x, y):
         return self.layer_norm(x + self.dropout(y))  # residual connection
+"""
