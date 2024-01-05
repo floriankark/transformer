@@ -3,6 +3,8 @@ import torch.nn as nn
 from collections import OrderedDict
 
 from modelling.attention import MultiHeadAttention
+from modelling.positional_encoding import PositionalEncoding
+from modelling.word_embedding import WordEmbedding
 
 
 class BaseTransformerLayer(nn.Module):
@@ -92,3 +94,53 @@ class TransformerDecoderLayer(nn.Module):
         )
         x = self.layer_norm_3(x + self.dropout(self.feature_transformation(x)))
         return x
+
+
+class TransformerModel(nn.Module):
+    def __init__(
+        self,
+        vocab_size,
+        d_model,
+        n_heads,
+        num_encoder_layers,
+        num_decoder_layers,
+        dim_feedforward,
+        dropout,
+        max_len,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.max_len = max_len
+
+        self.embedding = WordEmbedding(vocab_size, d_model)
+        self.positional_encoding = PositionalEncoding(d_model, max_len)
+
+        self.encoder_layers = nn.ModuleList(
+            [
+                BaseTransformerLayer(d_model, n_heads, dim_feedforward, dropout=dropout)
+                for _ in range(num_encoder_layers)
+            ]
+        )
+
+        self.decoder_layers = nn.ModuleList(
+            [
+                TransformerDecoderLayer(
+                    d_model, n_heads, dim_feedforward, dropout=dropout
+                )
+                for _ in range(num_decoder_layers)
+            ]
+        )
+
+        self.linear = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
+        x = self.positional_encoding(self.embedding(x) * torch.sqrt(self.d_model))
+        y = self.positional_encoding(self.embedding(y) * torch.sqrt(self.d_model))
+
+        for layer in self.encoder_layers:
+            x = layer(x, encoder_attention_mask)
+
+        for layer in self.decoder_layers:
+            y = layer(y, x, encoder_attention_mask, decoder_attention_mask)
+
+        return self.linear(y)
