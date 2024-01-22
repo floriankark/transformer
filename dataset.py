@@ -1,5 +1,21 @@
-from datasets import load_dataset
 import re
+from datasets import load_dataset
+from torch.utils.data import Dataset
+
+
+class MyDataset(Dataset):
+    def __init__(self, data, tokenizer):
+        self.data = data
+        self.tokenizer = tokenizer
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        item = self.tokenizer.encode(item)
+        return item
+
+    def __len__(self):
+        return len(self.data)
+
 
 dataset = load_dataset("wmt17", "de-en")
 
