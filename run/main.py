@@ -3,15 +3,14 @@ from torch.nn import CrossEntropyLoss
 from torch.optim import AdamW
 from modelling.lr_scheduler import TransformerLRScheduler
 from modelling.functional import TransformerModel
-from modelling.tokenizer import CustomBPETokenizer
-from dataset import MyDataset
-import pyarrow.parquet as pq
+from dataset import MyDataset, load_from_disk
 
+d_model = 64
+batch_size = 32
 
-# Initialisieren Sie das Transformer-Modell
 model = TransformerModel(
     vocab_size=10000,
-    d_model=64,
+    d_model=d_model,
     n_heads=4,
     num_encoder_layers=4,
     num_decoder_layers=4,
@@ -20,28 +19,30 @@ model = TransformerModel(
     max_len=100,
 )
 
-train_data = pq.read_table("data/data-00000-of-00003.arrow").to_pandas()
-validation_data = pq.read_table("data/data-00001-of-00003.arrow").to_pandas()
-test_data = pq.read_table("data/data-00002-of-00003.arrow").to_pandas()
+train_dataset = load_from_disk("data/train_dataset.pt")
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-tokenizer = CustomBPETokenizer("data/vocab.json", "data/merges.txt")
-train_dataset = MyDataset(train_data, tokenizer=tokenizer)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+loss_function = CrossEntropyLoss(ignore_index=0)
 
-loss_function = CrossEntropyLoss()
 optimizer_grouped_parameters = [
-    {"params": model.parameters(), "weight_decay": 0.01},
-    {"params": model.encoder.bias.parameters(), "weight_decay": 0.0},
-    {"params": model.decoder.bias.parameters(), "weight_decay": 0.0},
+    {'params': [param for name, param in model.named_parameters()
+                if 'bias' in name or 'layer_norm' in name], 'weight_decay': 0.0},
+    {'params': [param for name, param in model.named_parameters()
+                if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 1e-2}
 ]
-optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.98), eps=1e-9)
+
+lr = 1 ** (-1 / 2) * d_model ** (-1 / 2)
+optimizer = AdamW(optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.98), eps=1e-9)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=64, warmup_steps=4000)
 
+# try scaled fp16
 for epoch in range(5):
     for batch in train_loader:
         optimizer.zero_grad()
         output = model(batch)
-        loss = loss_function(output, batch)
+        loss = loss_function(
+            output.reshape(-1, output.size(-1)), batch[:, 1:].reshape(-1)
+        )  # batch_size, seq_len, d_model
         loss.backward()
         optimizer.step()
         lr_scheduler.step()

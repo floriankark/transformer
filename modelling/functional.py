@@ -131,7 +131,8 @@ class TransformerModel(nn.Module):
             ]
         )
 
-        self.linear = nn.Linear(d_model, vocab_size)
+        self.linear = nn.Linear(d_model, vocab_size)  # batch x seq_len x vocab_size
+        self.linear.weight = self.embedding.embedding.weight / torch.sqrt(self.d_model)
 
     def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
         x = self.positional_encoding(self.embedding(x) * torch.sqrt(self.d_model))
