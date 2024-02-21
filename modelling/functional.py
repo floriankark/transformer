@@ -5,6 +5,7 @@ from collections import OrderedDict
 from modelling.attention import MultiHeadAttention
 from modelling.positional_encoding import PositionalEncoding
 from modelling.word_embedding import WordEmbedding
+from math import sqrt
 
 
 class BaseTransformerLayer(nn.Module):
@@ -132,11 +133,11 @@ class TransformerModel(nn.Module):
         )
 
         self.linear = nn.Linear(d_model, vocab_size)  # batch x seq_len x vocab_size
-        self.linear.weight = self.embedding.embedding.weight / torch.sqrt(self.d_model)
+        self.linear.weight = self.embedding.embedding.weight #/ sqrt(self.d_model)
 
     def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
-        x = self.positional_encoding(self.embedding(x) * torch.sqrt(self.d_model))
-        y = self.positional_encoding(self.embedding(y) * torch.sqrt(self.d_model))
+        x = self.positional_encoding(self.embedding(x) * sqrt(self.d_model))
+        y = self.positional_encoding(self.embedding(y) * sqrt(self.d_model))
 
         for layer in self.encoder_layers:
             x = layer(x, encoder_attention_mask)

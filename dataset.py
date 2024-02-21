@@ -1,6 +1,7 @@
 import re
 from datasets import load_dataset
 from torch.utils.data import Dataset
+import torch
 
 
 class MyDataset(Dataset):
@@ -38,6 +39,10 @@ class MyDataset(Dataset):
         encoded_target_input = self.add_padding_or_truncate(encoded_target_input)
         encoded_target_output = self.add_padding_or_truncate(encoded_target_output)
 
+        encoded_source = torch.tensor(encoded_source, dtype=torch.long)
+        encoded_target_input = torch.tensor(encoded_target_input, dtype=torch.long)
+        encoded_target_output = torch.tensor(encoded_target_output, dtype=torch.long)
+
         return {
             "source": encoded_source,
             "target_input": encoded_target_input,
@@ -48,7 +53,7 @@ class MyDataset(Dataset):
         return len(self.data["translation"])
 
 
-dataset = load_dataset("wmt17", "de-en")
+#dataset = load_dataset("wmt17", "de-en")
 
 URL_PATTERN = re.compile(r"http\S+")
 TAG_PATTERN = re.compile(r"<.*?>")
@@ -99,21 +104,21 @@ def preprocess(example, min_length=5, max_length=64, ratio=1.5):
 #
 #cleaned_dataset.save_to_disk("data/wmt17_de_en")
     
-from datasets import load_from_disk
-from transformers import GPT2Tokenizer
-import torch
+#from datasets import load_from_disk
+#from transformers import GPT2Tokenizer
+#import torch
 
-train_data = load_from_disk("data/wmt17_de_en_train") 
-test_data = load_from_disk("data/wmt17_de_en_test")
-val_data = load_from_disk("data/wmt17_de_en_val")
+#train_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_train") 
+#test_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_test")
+#val_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_val")
 
-tokenizer = GPT2Tokenizer.from_pretrained("./gpt2_from_bpe")
+#tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_project/gpt2_from_bpe")
 
-train_dataset = MyDataset(train_data, tokenizer=tokenizer)
-test_dataset = MyDataset(test_data, tokenizer=tokenizer)
-val_dataset = MyDataset(val_data, tokenizer=tokenizer)
+#train_dataset = MyDataset(train_data, tokenizer=tokenizer)
+#test_dataset = MyDataset(test_data, tokenizer=tokenizer)
+#val_dataset = MyDataset(val_data, tokenizer=tokenizer)
 
 # safe as torch dataset
-torch.save(train_dataset, "data/train_dataset.pt")
-torch.save(test_dataset, "data/test_dataset.pt")
-torch.save(val_dataset, "data/val_dataset.pt")
+#torch.save(train_dataset, "/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
+#torch.save(test_dataset, "/gpfs/project/flkar101/transformer_project/data/test_dataset.pt")
+#torch.save(val_dataset, "/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
