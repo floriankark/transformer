@@ -9,6 +9,7 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import numpy as np
 from dataset import MyDataset
+from transformers import GPT2Tokenizer
 print("All modules are imported.")
 
 d_model = 128 # 64
@@ -30,8 +31,14 @@ model = TransformerModel(
 
 print("Loading datasets...")
 
-train_dataset = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
-val_dataset = torch.load("/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
+train_data = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
+val_data = torch.load("/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
+
+tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_project/gpt2_from_bpe")
+
+train_dataset = MyDataset(train_data)
+val_dataset = MyDataset(val_data)
+
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
@@ -69,7 +76,7 @@ def validation(model, val_loader, src_pad_idx, vocab_size, device):
 
     with torch.no_grad():
         for i, batch in tqdm(enumerate(val_loader)):
-            src_input, trg_input, trg_output = batch['src'], batch['tgt_inp'], batch['tgt_out']
+            src_input, trg_input, trg_output = torch.tensor(batch['source'], dtype=torch.long), torch.tensor(batch['target_input'], dtype=torch.long), torch.tensor(batch['target_output'], dtype=torch.long)
             src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)
 
             e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
@@ -98,9 +105,7 @@ for epoch in range(num_epochs):
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}")
     for batch in pbar:
-        print("Batch: ", batch)
-        src_input, trg_input, trg_output = batch['source'], batch['target_input'], batch['target_output']
-        print("src_input: ", src_input)
+        src_input, trg_input, trg_output = torch.tensor(batch['source'], dtype=torch.long), torch.tensor(batch['target_input'], dtype=torch.long), torch.tensor(batch['target_output'], dtype=torch.long)
         e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
 
         src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)

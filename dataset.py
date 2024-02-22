@@ -3,41 +3,52 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 import torch
 
-
 class MyDataset(Dataset):
-    def __init__(self, data, tokenizer, pad_length=64):
+    def __init__(self, data):
         self.data = data
-        self.tokenizer = tokenizer
-        self.pad_length = pad_length
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        return item
+
+    def __len__(self):
+        return len(self.data)
+
+
+"""class MyDataset(Dataset):
+    def __init__(self, data, tokenizer, pad_length=64):
+        data = data
+        tokenizer = tokenizer
+        pad_length = pad_length
 
     def add_padding_or_truncate(self, tokenized_text):
-            if len(tokenized_text) < self.pad_length:
-                left = self.pad_length - len(tokenized_text)
-                padding = [self.tokenizer.convert_tokens_to_ids("[PAD]")] * left
+            if len(tokenized_text) < pad_length:
+                left = pad_length - len(tokenized_text)
+                padding = [tokenizer.convert_tokens_to_ids("[PAD]")] * left
                 tokenized_text += padding
             else:
-                tokenized_text = tokenized_text[:self.pad_length]
+                tokenized_text = tokenized_text[:pad_length]
 
             return tokenized_text
 
     def __getitem__(self, idx):
-        item = self.data["translation"][idx]
+        item = data["translation"][idx]
 
         source = item["de"]
         target = item["en"]
 
-        bos_token_id = self.tokenizer.convert_tokens_to_ids("[BOS]")
-        eos_token_id = self.tokenizer.convert_tokens_to_ids("[EOS]")
+        bos_token_id = tokenizer.convert_tokens_to_ids("[BOS]")
+        eos_token_id = tokenizer.convert_tokens_to_ids("[EOS]")
 
-        encoded_source = self.tokenizer.encode(source)
-        encoded_target = self.tokenizer.encode(target)
+        encoded_source = tokenizer.encode(source)
+        encoded_target = tokenizer.encode(target)
 
         encoded_target_input = [bos_token_id] + encoded_target
         encoded_target_output = encoded_target + [eos_token_id]
 
-        encoded_source = self.add_padding_or_truncate(encoded_source)
-        encoded_target_input = self.add_padding_or_truncate(encoded_target_input)
-        encoded_target_output = self.add_padding_or_truncate(encoded_target_output)
+        encoded_source = add_padding_or_truncate(encoded_source)
+        encoded_target_input = add_padding_or_truncate(encoded_target_input)
+        encoded_target_output = add_padding_or_truncate(encoded_target_output)
 
         encoded_source = torch.tensor(encoded_source, dtype=torch.long)
         encoded_target_input = torch.tensor(encoded_target_input, dtype=torch.long)
@@ -50,7 +61,7 @@ class MyDataset(Dataset):
         }
 
     def __len__(self):
-        return len(self.data["translation"])
+        return len(data["translation"])"""
 
 
 #dataset = load_dataset("wmt17", "de-en")
@@ -122,3 +133,59 @@ def preprocess(example, min_length=5, max_length=64, ratio=1.5):
 #torch.save(train_dataset, "/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
 #torch.save(test_dataset, "/gpfs/project/flkar101/transformer_project/data/test_dataset.pt")
 #torch.save(val_dataset, "/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
+    
+"""from datasets import load_from_disk
+from transformers import GPT2Tokenizer
+
+tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_project/gpt2_from_bpe")
+
+train_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_train")
+test_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_test")
+val_data = load_from_disk("/gpfs/project/flkar101/transformer_project/data/wmt17_de_en_val")
+
+pad_length = 64
+def add_padding_or_truncate(tokenized_text):
+    if len(tokenized_text) < pad_length:
+        left = pad_length - len(tokenized_text)
+        padding = [tokenizer.convert_tokens_to_ids("[PAD]")] * left
+        tokenized_text += padding
+    else:
+        tokenized_text = tokenized_text[:pad_length]
+
+    return tokenized_text
+
+def preprocess_function(examples):
+    source = examples["translation"]["de"]
+    target = examples["translation"]["en"]
+
+    bos_token_id = tokenizer.convert_tokens_to_ids("[BOS]")
+    eos_token_id = tokenizer.convert_tokens_to_ids("[EOS]")
+
+    encoded_source = tokenizer.encode(source)
+    encoded_target = tokenizer.encode(target)
+
+    encoded_target_input = [bos_token_id] + encoded_target
+    encoded_target_output = encoded_target + [eos_token_id]
+
+    encoded_source = add_padding_or_truncate(encoded_source)
+    encoded_target_input = add_padding_or_truncate(encoded_target_input)
+    encoded_target_output = add_padding_or_truncate(encoded_target_output)
+
+    return {
+        "source": encoded_source,
+        "target_input": encoded_target_input,
+        "target_output": encoded_target_output,
+    }
+
+train_data = train_data.map(preprocess_function)
+test_data = test_data.map(preprocess_function)
+val_data = val_data.map(preprocess_function)
+
+train_data = train_data.remove_columns(["translation"])
+test_data = test_data.remove_columns(["translation"])
+val_data = val_data.remove_columns(["translation"])
+
+# safe as torch dataset
+torch.save(train_data, "/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
+torch.save(test_data, "/gpfs/project/flkar101/transformer_project/data/test_dataset.pt")
+torch.save(val_data, "/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")"""
