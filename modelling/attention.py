@@ -33,6 +33,7 @@ class Attention(nn.Module):
                 .expand_as(mask)  # (batch_size*n_heads, key seq_len, query seq_len)
             )
 
+        mask = mask.to(q.device)
         mask = mask.masked_fill(attention_mask == 0, float(-1e10))
 
         attention = torch.matmul(

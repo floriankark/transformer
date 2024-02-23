@@ -1,10 +1,22 @@
 import torch
 from datasets import load_dataset
+from dataset import MyDataset
+from torch.utils.data import DataLoader
 
-train_data = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
 test_data = torch.load("/gpfs/project/flkar101/transformer_project/data/test_dataset.pt")
-val_data = torch.load("/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
 
-torch.save(train_data, "/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
-torch.save(test_data, "/gpfs/project/flkar101/transformer_project/data/test_dataset.pt")
-torch.save(val_data, "/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
+test_dataset = MyDataset(test_data)
+
+test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+
+# get first batch
+first_batch = next(iter(test_loader))
+
+source, target_input, target_output = first_batch['source'], first_batch['target_input'], first_batch['target_output']
+
+# print type of source
+print(type(source[0]))
+print(source[0])
+
+print(type(torch.stack(source)))
+print(torch.stack(source))

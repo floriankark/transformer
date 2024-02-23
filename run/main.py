@@ -76,7 +76,7 @@ def validation(model, val_loader, src_pad_idx, vocab_size, device):
 
     with torch.no_grad():
         for i, batch in tqdm(enumerate(val_loader)):
-            src_input, trg_input, trg_output = torch.tensor(batch['source'], dtype=torch.long), torch.tensor(batch['target_input'], dtype=torch.long), torch.tensor(batch['target_output'], dtype=torch.long)
+            src_input, trg_input, trg_output = torch.stack(batch['source']), torch.stack(batch['target_input']), torch.stack(batch['target_output'])
             src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)
 
             e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
@@ -105,7 +105,7 @@ for epoch in range(num_epochs):
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}")
     for batch in pbar:
-        src_input, trg_input, trg_output = torch.tensor(batch['source'], dtype=torch.long), torch.tensor(batch['target_input'], dtype=torch.long), torch.tensor(batch['target_output'], dtype=torch.long)
+        src_input, trg_input, trg_output = torch.stack(batch['source']), torch.stack(batch['target_input']), torch.stack(batch['target_output'])
         e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
 
         src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)
@@ -114,7 +114,7 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
 
 
-        output = model(src_input, e_mask, trg_input, d_mask)
+        output = model(src_input, trg_input, e_mask, d_mask)
         loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
 
         loss.backward()
