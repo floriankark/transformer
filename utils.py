@@ -57,3 +57,8 @@ class BPETokenizer:
                 word = word.replace(pair, replacement)
             text[i] = word.split()
         return list(itertools.chain(*text))
+
+def make_mask(src_input, trg_input, pad_id):
+    e_mask = (src_input != pad_id).int()
+    d_mask = (trg_input != pad_id).int()
+    return e_mask, d_mask

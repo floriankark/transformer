@@ -10,10 +10,12 @@ from tqdm import tqdm
 import numpy as np
 from dataset import MyDataset
 from transformers import GPT2Tokenizer
+from torch.cuda.amp import GradScaler, autocast
+from utils import make_mask
 print("All modules are imported.")
 
-d_model = 128 # 64
-batch_size = 32
+d_model = 256 
+batch_size = 64
 src_pad_idx = 0
 num_epochs = 3
 vocab_size = 50000
@@ -21,12 +23,12 @@ vocab_size = 50000
 model = TransformerModel(
     vocab_size=vocab_size,
     d_model=d_model,
-    n_heads=4,
-    num_encoder_layers=4,
-    num_decoder_layers=4,
-    dim_feedforward=64, # 256
-    dropout=0.1,
-    max_len=64,
+    n_heads=8,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=1024, # 4 * d_model
+    dropout=0.2, # 0.1 better
+    max_len=64
 )
 
 print("Loading datasets...")
@@ -62,17 +64,13 @@ optimizer_grouped_parameters = [
 lr = 1 ** (-1 / 2) * d_model ** (-1 / 2)
 optimizer = AdamW(optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.98), eps=1e-9)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 1200
-
-def make_mask(src_input, trg_input, pad_id):
-    e_mask = (src_input != pad_id).int()
-    d_mask = (trg_input != pad_id).int()
-    return e_mask, d_mask
+criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=0.1)
+scaler = GradScaler()
 
 def validation(model, val_loader, src_pad_idx, vocab_size, device):
     print("Validation processing...")
     model.eval()
     valid_losses = []
-    criterion = CrossEntropyLoss(ignore_index=src_pad_idx)
 
     with torch.no_grad():
         for i, batch in tqdm(enumerate(val_loader)):
@@ -101,9 +99,8 @@ valid_loss_list = []
 for epoch in range(num_epochs):
     model.train()
     loss_step = []
-    criterion = CrossEntropyLoss(ignore_index=src_pad_idx)
 
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}")
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
     for batch in pbar:
         src_input, trg_input, trg_output = torch.stack(batch['source']), torch.stack(batch['target_input']), torch.stack(batch['target_output'])
         e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
@@ -113,14 +110,16 @@ for epoch in range(num_epochs):
 
         optimizer.zero_grad()
 
+        with autocast(dtype=torch.float16):
+            output = model(src_input, trg_input, e_mask, d_mask)
+            loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
 
-        output = model(src_input, trg_input, e_mask, d_mask)
-        loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
-
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         lr_scheduler.step()
 
+        loss_step.append(loss.item())
     loss_curr_epoch = np.mean(loss_step)
     valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
 
@@ -132,8 +131,8 @@ for epoch in range(num_epochs):
     valid_loss_list.append(valid_loss_curr_epoch)
 
     # safe lists
-    np.save("./results/loss_list.npy", loss_list)
-    np.save("./results/valid_loss_list.npy", valid_loss_list)
+    np.save("/gpfs/project/flkar101/transformer_project/results/loss_list.npy", loss_list)
+    np.save("/gpfs/project/flkar101/transformer_project/results/valid_loss_list.npy", valid_loss_list)
 
     if validloss_curr_epoch < best_loss:
         best_loss = valid_loss_curr_epoch
@@ -142,5 +141,5 @@ for epoch in range(num_epochs):
             'optim_state_dict': optimizer.state_dict(),
             'loss': best_loss
         }
-        torch.save(state_dict, f"./results/best_val_loss_model_epoch{epoch}.pth")
+        torch.save(state_dict, "/gpfs/project/flkar101/transformer_project/results/best_val_loss_model.pth")
         print("Best checkpoint is saved with epoch = ", epoch)
