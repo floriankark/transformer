@@ -14,20 +14,20 @@ from torch.cuda.amp import GradScaler, autocast
 from utils import make_mask
 print("All modules are imported.")
 
-d_model = 256 
+d_model = 128 
 batch_size = 64
 src_pad_idx = 0
-num_epochs = 3
+num_epochs = 5
 vocab_size = 50000
 
 model = TransformerModel(
     vocab_size=vocab_size,
     d_model=d_model,
     n_heads=8,
-    num_encoder_layers=6,
-    num_decoder_layers=6,
-    dim_feedforward=1024, # 4 * d_model
-    dropout=0.2, # 0.1 better
+    num_encoder_layers=3,
+    num_decoder_layers=3,
+    dim_feedforward=512, # 4 * d_model
+    dropout=0.1, # test 0.2 -> paper says thats better
     max_len=64
 )
 
@@ -41,8 +41,8 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
 print("All datasets are loaded.")
 
@@ -61,8 +61,7 @@ optimizer_grouped_parameters = [
                 if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 1e-2}
 ]
 
-lr = 1 ** (-1 / 2) * d_model ** (-1 / 2)
-optimizer = AdamW(optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.98), eps=1e-9)
+optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.98), eps=1e-9)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 1200
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=0.1)
 scaler = GradScaler()
@@ -120,12 +119,13 @@ for epoch in range(num_epochs):
         lr_scheduler.step()
 
         loss_step.append(loss.item())
+    
     loss_curr_epoch = np.mean(loss_step)
     valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
 
-    # Print epoch results to screen
     msg = (
-        f'Ep {epoch}/{num_epochs}:  Loss: Train {loss_curr_epoch:.3f}  Loss: Val {valid_loss_curr_epoch:.3f}')
+        f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f}  validation loss: {valid_loss_curr_epoch:.3f} |'
+        f' ppl: {np.exp(loss_curr_epoch):.2f}')
     print(msg)
     loss_list.append(loss_curr_epoch)
     valid_loss_list.append(valid_loss_curr_epoch)
@@ -141,5 +141,5 @@ for epoch in range(num_epochs):
             'optim_state_dict': optimizer.state_dict(),
             'loss': best_loss
         }
-        torch.save(state_dict, "/gpfs/project/flkar101/transformer_project/results/best_val_loss_model.pth")
+        torch.save(state_dict, "/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_mini.pth")
         print("Best checkpoint is saved with epoch = ", epoch)
