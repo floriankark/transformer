@@ -14,19 +14,19 @@ from torch.cuda.amp import GradScaler, autocast
 from utils import make_mask
 print("All modules are imported.")
 
-d_model = 128 
-batch_size = 64
+d_model = 512
+batch_size = 512
 src_pad_idx = 0
-num_epochs = 5
+num_epochs = 10
 vocab_size = 50000
 
 model = TransformerModel(
     vocab_size=vocab_size,
     d_model=d_model,
     n_heads=8,
-    num_encoder_layers=3,
-    num_decoder_layers=3,
-    dim_feedforward=512, # 4 * d_model
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=2048, # 4 * d_model
     dropout=0.1, # test 0.2 -> paper says thats better
     max_len=64
 )

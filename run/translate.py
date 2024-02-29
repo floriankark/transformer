@@ -41,14 +41,15 @@ def generate_translation(device, model, src_input, tokenizer, max_len=64):
 
 model = TransformerModel(
     vocab_size=50000,
-    d_model=128,
+    d_model=512,
     n_heads=8,
-    num_encoder_layers=3,
-    num_decoder_layers=3,
-    dim_feedforward=512,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=2048,
     dropout=0.1,
     max_len=64
 )
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
