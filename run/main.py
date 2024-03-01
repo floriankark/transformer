@@ -61,7 +61,7 @@ optimizer_grouped_parameters = [
                 if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 1e-2}
 ]
 
-optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.98), eps=1e-9)
+optimizer = AdamW(optimizer_grouped_parameters, lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 1200
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx) #, label_smoothing=0.1)
 scaler = GradScaler()
@@ -112,6 +112,7 @@ for epoch in range(num_epochs):
         with autocast(dtype=torch.float16):
             output = model(src_input, trg_input, e_mask, d_mask)
             loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
+            #print("Loss: ", loss.item())
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
