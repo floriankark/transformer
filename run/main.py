@@ -63,7 +63,7 @@ optimizer_grouped_parameters = [
 
 optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.98), eps=1e-9)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 1200
-criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=0.1)
+criterion = CrossEntropyLoss(ignore_index=src_pad_idx) #, label_smoothing=0.1)
 scaler = GradScaler()
 
 def validation(model, val_loader, src_pad_idx, vocab_size, device):
@@ -126,7 +126,7 @@ for epoch in range(num_epochs):
     msg = (
         f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f}  validation loss: {valid_loss_curr_epoch:.3f} |'
         f' ppl: {np.exp(loss_curr_epoch):.2f}')
-    print(msg)
+    #print(msg)
     loss_list.append(loss_curr_epoch)
     valid_loss_list.append(valid_loss_curr_epoch)
 

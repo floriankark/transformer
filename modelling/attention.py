@@ -47,8 +47,7 @@ import math
         return attention"""
     
 
-# improved version of Attention class (already tested and working correctly) over x5 speedup compared to above
-# even quicker is attention = F.scaled_dot_product_attention(q, k, v, mask) # x1.4 quicker than below 
+# even quicker is attention = F.scaled_dot_product_attention(q, k, v, mask)
 class Attention(nn.Module):
     def __init__(self, mask_future=False):
         super().__init__()
@@ -67,7 +66,6 @@ class Attention(nn.Module):
             if q.dim() == 4:
                 mask.unsqueeze_(1)
 
-        #attn_weight = torch.baddbmm(mask, q, k.transpose(-2, -1), beta=scale_factor, alpha=scale_factor)
         mask = mask.to(q.device)
         attn_weight = (q @ k.transpose(-2, -1) + mask) * scale_factor
 
@@ -96,7 +94,6 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, q, k, v, attention_mask=None):
         # input shape of q, k, v: (batch_size, seq_len, d_model)
-        # Diff to og: apply weight matrix on whole input but split into n_heads so that each head has own part of weight matrix
         q = (
             self.query_transform(q)
             .view(q.size(0), q.size(1), self.n_heads, self.d_model//self.n_heads)
@@ -117,17 +114,8 @@ class MultiHeadAttention(nn.Module):
         )
 
         # q, k, v shape: (batch_size, n_heads, seq_len, d_model/n_heads)
-        #q = q.view(-1, q.size(2), q.size(3))
-        #k = k.view(-1, k.size(2), k.size(3))
-        #v = v.view(-1, v.size(2), v.size(3))
-
-        # q, k, v shape: (batch_size, n_heads, seq_len, d_model/n_heads)
         attention = self.attention(q, k, v, attention_mask.unsqueeze(1))
-
-        # reverse view operations (concatenation of heads)
-        """attention = attention.view(
-            -1, self.n_heads, attention.size(1), attention.size(2)
-        )"""
+        
         attention = attention.transpose(1, 2).contiguous()
         attention = attention.view(attention.size(0), attention.size(1), self.d_model)
 
