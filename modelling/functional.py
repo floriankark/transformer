@@ -24,7 +24,6 @@ class BaseTransformerLayer(nn.Module):
         self.self_attention = MultiHeadAttention(
             input_dim, num_heads, mask_future, bias
         )
-        self.layer_norm_1 = nn.LayerNorm(input_dim)
 
         self.feature_transformation = nn.Sequential(
             OrderedDict(
@@ -35,14 +34,16 @@ class BaseTransformerLayer(nn.Module):
                 ]
             )
         )
+
+        self.layer_norm_1 = nn.LayerNorm(input_dim)
         self.layer_norm_2 = nn.LayerNorm(input_dim)
 
     def forward(self, x, attention_mask=None):
-        x = self.layer_norm_1(
+        x_attn = self.layer_norm_1(
             x + self.dropout(self.self_attention(x, x, x, attention_mask))
         )
-        x = self.layer_norm_2(x + self.dropout(self.feature_transformation(x)))
-        return x
+        x_ffn = self.layer_norm_2(x_attn + self.dropout(self.feature_transformation(x_attn)))
+        return x_ffn
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -61,12 +62,10 @@ class TransformerDecoderLayer(nn.Module):
         self.self_attention = MultiHeadAttention(
             input_dim, num_heads, mask_future=True, bias=bias
         )
-        self.layer_norm_1 = nn.LayerNorm(input_dim)
 
         self.encoder_attention = MultiHeadAttention(
-            input_dim, num_heads, mask_future, bias
+            input_dim, num_heads
         )
-        self.layer_norm_2 = nn.LayerNorm(input_dim)
 
         self.feature_transformation = nn.Sequential(
             OrderedDict(
@@ -77,24 +76,27 @@ class TransformerDecoderLayer(nn.Module):
                 ]
             )
         )
+
+        self.layer_norm_1 = nn.LayerNorm(input_dim)
+        self.layer_norm_2 = nn.LayerNorm(input_dim)
         self.layer_norm_3 = nn.LayerNorm(input_dim)
 
     def forward(
         self, x, encoder_output, encoder_attention_mask=None, attention_mask=None
     ):
-        x = self.layer_norm_1(
+        x_enc = self.layer_norm_1(
             x + self.dropout(self.self_attention(x, x, x, attention_mask))
         )
-        x = self.layer_norm_2(
-            x
+        x_dec = self.layer_norm_2(
+            x_enc
             + self.dropout(
                 self.encoder_attention(
-                    x, encoder_output, encoder_output, encoder_attention_mask
+                    x_enc, encoder_output, encoder_output, encoder_attention_mask
                 )
             )
         )
-        x = self.layer_norm_3(x + self.dropout(self.feature_transformation(x)))
-        return x
+        x_out = self.layer_norm_3(x_dec + self.dropout(self.feature_transformation(x_dec)))
+        return x_out
 
 
 class TransformerModel(nn.Module):
@@ -133,6 +135,9 @@ class TransformerModel(nn.Module):
         )
 
         self.linear = nn.Linear(d_model, vocab_size)  # batch x seq_len x vocab_size
+        for param in self.parameters():
+            if param.dim() > 1:
+                nn.init.xavier_uniform_(param)
         self.linear.weight = self.embedding.embedding.weight
 
     def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):

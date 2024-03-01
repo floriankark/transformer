@@ -1,4 +1,3 @@
-print("Importing modules...")
 import torch
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
@@ -12,26 +11,25 @@ from dataset import MyDataset
 from transformers import GPT2Tokenizer
 from torch.cuda.amp import GradScaler, autocast
 from utils import make_mask
-print("All modules are imported.")
 
-d_model = 512
-batch_size = 512
+# small model to test
+d_model = 128
+dim_feedforward = 4*d_model
+batch_size = 128
 src_pad_idx = 0
-num_epochs = 10
+num_epochs = 20
 vocab_size = 50000
 
 model = TransformerModel(
     vocab_size=vocab_size,
     d_model=d_model,
-    n_heads=8,
-    num_encoder_layers=6,
-    num_decoder_layers=6,
-    dim_feedforward=2048, # 4 * d_model
+    n_heads=4,
+    num_encoder_layers=4,
+    num_decoder_layers=4,
+    dim_feedforward=dim_feedforward,
     dropout=0.1, # test 0.2 -> paper says thats better
     max_len=64
 )
-
-print("Loading datasets...")
 
 train_data = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
 val_data = torch.load("/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
@@ -41,12 +39,11 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 100000))
+train_loader = DataLoader(trainset_1, batch_size=batch_size, shuffle=True) #, num_workers=4, pin_memory=True)
+valset_1 = torch.utils.data.Subset(val_dataset, range(0, 100))
+val_loader = DataLoader(valset_1, batch_size=batch_size, shuffle=False) #, num_workers=4, pin_memory=True)
 
-print("All datasets are loaded.")
-
-print("Setting up model, optimizer, and lr_scheduler...")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
 
@@ -58,11 +55,11 @@ optimizer_grouped_parameters = [
     {'params': [param for name, param in model.named_parameters()
                 if 'bias' in name or 'layer_norm' in name], 'weight_decay': 0.0},
     {'params': [param for name, param in model.named_parameters()
-                if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 1e-2}
+                if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 0.01}
 ]
 
-optimizer = AdamW(optimizer_grouped_parameters, lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
-lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 1200
+optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.999), eps=1e-08)
+lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=500) # 4000
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx) #, label_smoothing=0.1)
 scaler = GradScaler()
 
@@ -112,14 +109,21 @@ for epoch in range(num_epochs):
         with autocast(dtype=torch.float16):
             output = model(src_input, trg_input, e_mask, d_mask)
             loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
-            #print("Loss: ", loss.item())
+        
 
         scaler.scale(loss).backward()
+        #scaler.unscale_(optimizer)
+
+        #torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
         scaler.step(optimizer)
         scaler.update()
+        
         lr_scheduler.step()
 
         loss_step.append(loss.item())
+
+        pbar.set_postfix({'loss': loss.item()})
     
     loss_curr_epoch = np.mean(loss_step)
     valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
