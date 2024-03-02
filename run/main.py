@@ -13,7 +13,7 @@ from torch.cuda.amp import GradScaler, autocast
 from utils import make_mask
 
 # small model to test
-d_model = 128
+d_model = 512
 dim_feedforward = 4*d_model
 batch_size = 128
 src_pad_idx = 0
@@ -23,9 +23,9 @@ vocab_size = 50000
 model = TransformerModel(
     vocab_size=vocab_size,
     d_model=d_model,
-    n_heads=4,
-    num_encoder_layers=4,
-    num_decoder_layers=4,
+    n_heads=8,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
     dim_feedforward=dim_feedforward,
     dropout=0.1, # test 0.2 -> paper says thats better
     max_len=64
@@ -39,9 +39,9 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 100000))
+trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 1000000))
 train_loader = DataLoader(trainset_1, batch_size=batch_size, shuffle=True) #, num_workers=4, pin_memory=True)
-valset_1 = torch.utils.data.Subset(val_dataset, range(0, 100))
+valset_1 = torch.utils.data.Subset(val_dataset, range(0, 1000))
 val_loader = DataLoader(valset_1, batch_size=batch_size, shuffle=False) #, num_workers=4, pin_memory=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -59,8 +59,8 @@ optimizer_grouped_parameters = [
 ]
 
 optimizer = AdamW(optimizer_grouped_parameters, lr=0.001, betas=(0.9, 0.999), eps=1e-08)
-lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=500) # 4000
-criterion = CrossEntropyLoss(ignore_index=src_pad_idx) #, label_smoothing=0.1)
+lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 4000
+criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=0.1)
 scaler = GradScaler()
 
 def validation(model, val_loader, src_pad_idx, vocab_size, device):

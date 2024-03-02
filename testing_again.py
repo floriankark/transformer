@@ -187,3 +187,16 @@ import torch
 ATTENTION_MASK = torch.tensor([[1, 1, 1], [1, 1, 0]])
 ATTENTION_MASK.unsqueeze(1)
 # %%
+import torch
+import torch.nn as nn
+# word embedding
+from modelling.word_embedding import WordEmbedding
+
+embedding = nn.Embedding(10000, 512)
+for i,j in embedding.named_parameters():
+    print(i, j.size())
+# %%
+# get pytorch version
+import torch
+print(torch.__version__)
+# %%

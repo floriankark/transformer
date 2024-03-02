@@ -87,28 +87,39 @@ class MultiHeadAttention(nn.Module):
         self.attention = Attention(mask_future)
         self.d_model = d_model
         self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
         self.query_transform = nn.Linear(d_model, d_model, bias=bias)
         self.key_transform = nn.Linear(d_model, d_model, bias=bias)
         self.value_transform = nn.Linear(d_model, d_model, bias=bias)
         self.output_transform = nn.Linear(d_model, d_model, bias=bias)
 
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.xavier_uniform_(self.query_transform.weight)
+        nn.init.xavier_uniform_(self.key_transform.weight)
+        nn.init.xavier_uniform_(self.value_transform.weight)
+        nn.init.xavier_uniform_(self.output_transform.weight)
+
     def forward(self, q, k, v, attention_mask=None):
         # input shape of q, k, v: (batch_size, seq_len, d_model)
+        batch_size = q.size(0)
+        seq_len = q.size(1)
         q = (
             self.query_transform(q)
-            .view(q.size(0), q.size(1), self.n_heads, self.d_model//self.n_heads)
+            .view(batch_size, seq_len, self.n_heads, self.head_dim)
             .transpose(1, 2)
             .contiguous()
         )
         k = (
             self.key_transform(k)
-            .view(k.size(0), k.size(1), self.n_heads, self.d_model//self.n_heads)
+            .view(batch_size, seq_len, self.n_heads, self.head_dim)
             .transpose(1, 2)
             .contiguous()
         )
         v = (
             self.value_transform(v)
-            .view(v.size(0), v.size(1), self.n_heads, self.d_model//self.n_heads)
+            .view(batch_size, seq_len, self.n_heads, self.head_dim)
             .transpose(1, 2)
             .contiguous()
         )
@@ -117,6 +128,6 @@ class MultiHeadAttention(nn.Module):
         attention = self.attention(q, k, v, attention_mask.unsqueeze(1))
         
         attention = attention.transpose(1, 2).contiguous()
-        attention = attention.view(attention.size(0), attention.size(1), self.d_model)
+        attention = attention.view(batch_size, seq_len, self.d_model)
 
         return self.output_transform(attention)

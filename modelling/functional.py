@@ -115,7 +115,7 @@ class TransformerModel(nn.Module):
         self.d_model = d_model
         self.max_len = max_len
 
-        self.embedding = WordEmbedding(vocab_size, d_model)
+        self.embedding = nn.Embedding(vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(d_model, max_len)
 
         self.encoder_layers = nn.ModuleList(
@@ -135,10 +135,18 @@ class TransformerModel(nn.Module):
         )
 
         self.linear = nn.Linear(d_model, vocab_size)  # batch x seq_len x vocab_size
-        for param in self.parameters():
+
+        self.init_weights()
+
+    def init_weights(self) -> None:
+        initrange = 0.1
+        self.embedding.weight.data.uniform_(-initrange, initrange)
+        self.linear.bias.data.zero_()
+        self.linear.weight.data.uniform_(-initrange, initrange)
+        """for param in self.parameters():
             if param.dim() > 1:
                 nn.init.xavier_uniform_(param)
-        self.linear.weight = self.embedding.embedding.weight
+        self.linear.weight = self.embedding.embedding.weight"""
 
     def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
         x = self.positional_encoding(self.embedding(x) * sqrt(self.d_model))
