@@ -1,6 +1,6 @@
 #!/bin/bash
-#PBS -l select=1:ncpus=10:mem=40gb:ngpus=1:accelerator_model=a100
-#PBS -l walltime=12:59:00
+#PBS -l select=1:ncpus=5:mem=20gb:ngpus=1:accelerator_model=a100
+#PBS -l walltime=02:29:00
 #PBS -A "MM_ClaimWorth"
  
 set -e

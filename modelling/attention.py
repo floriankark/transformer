@@ -4,49 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 import math
 
-
-"""class Attention(nn.Module):
-    def __init__(self, mask_future=False):
-        super().__init__()
-        self.mask_future = mask_future
-
-    def forward(self, q, k, v, attention_mask=None):
-        # input shape of q, k, v: (batch_size, seq_len, d_model)
-        mask = torch.zeros(q.size(1), k.size(1))
-        if self.mask_future:
-            mask = mask.masked_fill(
-                torch.triu(torch.ones(mask.shape), diagonal=1) == 1, float(-1e10)
-            )
-
-        mask = torch.stack([mask] * q.size(0))
-
-        repetition = int(
-            q.size(0) / attention_mask.size(0)
-        )  # basically number of heads
-
-        if attention_mask is not None:
-            attention_mask = (
-                attention_mask.unsqueeze(-1)  # (batch_size, 1, key seq_len)
-                .transpose(1, 2)  # (batch_size, key seq_len, 1)
-                .repeat_interleave(
-                    repetition, dim=0
-                )  # (batch_size*n_heads, key seq_len, 1)
-                .expand_as(mask)  # (batch_size*n_heads, key seq_len, query seq_len)
-            )
-
-        mask = mask.to(q.device)
-        mask = mask.masked_fill(attention_mask == 0, float(-1e10))
-
-        attention = torch.matmul(
-            F.softmax(
-                torch.matmul(q, k.transpose(1, 2)) / np.sqrt(q.size(-1)) + mask,
-                dim=-1,
-            ),
-            v,
-        )
-        return attention"""
-    
-
 # even quicker is attention = F.scaled_dot_product_attention(q, k, v, mask)
 class Attention(nn.Module):
     def __init__(self, mask_future=False):
@@ -78,20 +35,44 @@ class Attention(nn.Module):
         attn_weight = attn_weight @ v
             
         return attn_weight
+    
+def scaled_dot_product_attention(query, key, value, attn_mask=None, is_causal=False) -> torch.Tensor:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1))
+    attn_bias = torch.zeros(L, S, dtype=query.dtype)
+    if is_causal:
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(query.dtype)
+
+    attn_bias = attn_bias.to(query.device)
+    attn_weight = (query @ key.transpose(-2, -1)) * scale_factor
+    attn_weight = attn_weight + attn_bias
+
+    if is_causal:
+        temp_mask = temp_mask.to(query.device)
+        attn_weight = attn_weight.masked_fill(temp_mask.logical_not(), 0)
+
+    if attn_mask is not None:
+        attn_mask = attn_mask.to(query.dtype)
+        attn_weight = attn_weight.masked_fill(attn_mask == 0, float("-inf"))
+
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    return attn_weight @ value
 
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, n_heads, mask_future=False, bias=False):
+    def __init__(self, d_model, n_heads, mask_future=False):
         super().__init__()
-        self.attention = Attention(mask_future)
+        self.mask_future = mask_future
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-        self.query_transform = nn.Linear(d_model, d_model, bias=bias)
-        self.key_transform = nn.Linear(d_model, d_model, bias=bias)
-        self.value_transform = nn.Linear(d_model, d_model, bias=bias)
-        self.output_transform = nn.Linear(d_model, d_model, bias=bias)
+        self.query_transform = nn.Linear(d_model, d_model, bias=False)
+        self.key_transform = nn.Linear(d_model, d_model, bias=False)
+        self.value_transform = nn.Linear(d_model, d_model, bias=False)
+        self.output_transform = nn.Linear(d_model, d_model, bias=True)
 
         self._reset_parameters()
 
@@ -125,7 +106,10 @@ class MultiHeadAttention(nn.Module):
         )
 
         # q, k, v shape: (batch_size, n_heads, seq_len, d_model/n_heads)
-        attention = self.attention(q, k, v, attention_mask.unsqueeze(1))
+        #attention = self.attention(q, k, v, attention_mask.unsqueeze(1))
+        # give attention mask d type of q
+        attention_mask = attention_mask.to(q.dtype)
+        attention = scaled_dot_product_attention(q, k, v, attention_mask.unsqueeze(1).unsqueeze(1), is_causal=self.mask_future)
         
         attention = attention.transpose(1, 2).contiguous()
         attention = attention.view(batch_size, seq_len, self.d_model)

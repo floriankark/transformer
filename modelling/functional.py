@@ -15,14 +15,12 @@ class BaseTransformerLayer(nn.Module):
         num_heads,
         feature_dim,
         dropout=0.1,
-        mask_future=False,
-        bias=False,
     ):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
 
         self.self_attention = MultiHeadAttention(
-            input_dim, num_heads, mask_future, bias
+            input_dim, num_heads
         )
 
         self.feature_transformation = nn.Sequential(
@@ -39,10 +37,15 @@ class BaseTransformerLayer(nn.Module):
         self.layer_norm_2 = nn.LayerNorm(input_dim)
 
     def forward(self, x, attention_mask=None):
-        x_attn = self.layer_norm_1(
+        x_norm = self.layer_norm_1(x)
+        x_attn = x + self.dropout(self.self_attention(x_norm, x_norm, x_norm, attention_mask))
+
+        x_attn_norm = self.layer_norm_2(x_attn)
+        x_ffn = x_attn + self.dropout(self.feature_transformation(x_attn_norm))
+        """x_attn = self.layer_norm_1(
             x + self.dropout(self.self_attention(x, x, x, attention_mask))
         )
-        x_ffn = self.layer_norm_2(x_attn + self.dropout(self.feature_transformation(x_attn)))
+        x_ffn = self.layer_norm_2(x_attn + self.dropout(self.feature_transformation(x_attn)))"""
         return x_ffn
 
 
@@ -53,14 +56,12 @@ class TransformerDecoderLayer(nn.Module):
         num_heads,
         feature_dim,
         dropout=0.1,
-        mask_future=False,
-        bias=False,
     ):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
 
         self.self_attention = MultiHeadAttention(
-            input_dim, num_heads, mask_future=True, bias=bias
+            input_dim, num_heads, mask_future=True
         )
 
         self.encoder_attention = MultiHeadAttention(
@@ -84,7 +85,16 @@ class TransformerDecoderLayer(nn.Module):
     def forward(
         self, x, encoder_output, encoder_attention_mask=None, attention_mask=None
     ):
-        x_enc = self.layer_norm_1(
+        x_norm = self.layer_norm_1(x)
+        x_attn = x + self.dropout(self.self_attention(x_norm, x_norm, x_norm, attention_mask))
+
+        x_attn_norm = self.layer_norm_2(x_attn)
+        x_enc_norm = self.layer_norm_2(encoder_output)
+        x_dec = x_attn + self.dropout(self.encoder_attention(x_attn_norm, x_enc_norm, x_enc_norm, encoder_attention_mask))
+
+        x_dec_norm = self.layer_norm_3(x_dec)
+        x_out = x_dec + self.dropout(self.feature_transformation(x_dec_norm))
+        """x_enc = self.layer_norm_1(
             x + self.dropout(self.self_attention(x, x, x, attention_mask))
         )
         x_dec = self.layer_norm_2(
@@ -95,7 +105,7 @@ class TransformerDecoderLayer(nn.Module):
                 )
             )
         )
-        x_out = self.layer_norm_3(x_dec + self.dropout(self.feature_transformation(x_dec)))
+        x_out = self.layer_norm_3(x_dec + self.dropout(self.feature_transformation(x_dec)))"""
         return x_out
 
 
@@ -143,10 +153,6 @@ class TransformerModel(nn.Module):
         self.embedding.weight.data.uniform_(-initrange, initrange)
         self.linear.bias.data.zero_()
         self.linear.weight.data.uniform_(-initrange, initrange)
-        """for param in self.parameters():
-            if param.dim() > 1:
-                nn.init.xavier_uniform_(param)
-        self.linear.weight = self.embedding.embedding.weight"""
 
     def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
         x = self.positional_encoding(self.embedding(x) * sqrt(self.d_model))

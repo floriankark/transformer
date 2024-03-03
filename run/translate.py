@@ -50,10 +50,9 @@ model = TransformerModel(
     max_len=64
 )
 
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-checkpoint = torch.load("/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_mini.pth")
+checkpoint = torch.load("/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_base_test.pth")
 model.load_state_dict(checkpoint['model_state_dict'])
 model.to(device)
 
@@ -80,7 +79,5 @@ for batch in pbar:
 
     translations.append({'source': src_sentence_text, 'correct': correct_translation_text, 'generated': translation_text})
 
-    print(f"Source: {src_sentence_text}, Correct: {correct_translation_text}, Generated: {translation_text}")
-
-with open("/gpfs/project/flkar101/transformer_project/data/translations.json", "w") as f:
+with open("/gpfs/project/flkar101/transformer_project/data/translations_base_test.json", "w") as f:
     json.dump(translations, f, indent=2)
