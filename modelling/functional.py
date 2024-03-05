@@ -1,167 +1,259 @@
+import copy
 import torch
 import torch.nn as nn
-from collections import OrderedDict
+from math import sqrt
+from typing import Optional
 
 from modelling.attention import MultiHeadAttention
 from modelling.positional_encoding import PositionalEncoding
-from modelling.word_embedding import WordEmbedding
-from math import sqrt
 
-
-class BaseTransformerLayer(nn.Module):
+class TransformerEncoderLayer(nn.Module):
     def __init__(
         self,
-        input_dim,
-        num_heads,
-        feature_dim,
-        dropout=0.1,
-    ):
+        d_model,
+        n_heads,
+        dim_feedforward,
+        dropout,
+        norm_first=False,
+        ):
         super().__init__()
-        self.dropout = nn.Dropout(dropout)
+        self.norm_first = norm_first
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
-        self.self_attention = MultiHeadAttention(
-            input_dim, num_heads
+        self.self_attn = MultiHeadAttention(d_model, n_heads)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model),
         )
+        # see https://github.com/tensorflow/tensor2tensor/blob/bafdc1b67730430d38d6ab802cbd51f9d053ba2e/tensor2tensor/layers/common_hparams.py#L144
+        self.norm1 = nn.LayerNorm(d_model) # eps=1e-6, bool=True 
+        self.norm2 = nn.LayerNorm(d_model) # eps=1e-6, bool=True
+    
+    def _sa_block(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+        x = self.self_attn(x, x, x, attn_mask=attn_mask)
+        return self.dropout1(x)
 
-        self.feature_transformation = nn.Sequential(
-            OrderedDict(
-                [
-                    ("linear1", nn.Linear(input_dim, feature_dim)),
-                    ("relu", nn.ReLU()),
-                    ("linear2", nn.Linear(feature_dim, input_dim)),
-                ]
-            )
-        )
+    def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout2(self.ffn(x))
 
-        self.layer_norm_1 = nn.LayerNorm(input_dim)
-        self.layer_norm_2 = nn.LayerNorm(input_dim)
+    def forward(self, x, attn_mask: Optional[torch.Tensor] = None):
 
-    def forward(self, x, attention_mask=None):
-        x_norm = self.layer_norm_1(x)
-        x_attn = x + self.dropout(self.self_attention(x_norm, x_norm, x_norm, attention_mask))
+        # Pre Norm as in Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
+        if self.norm_first:
+            x = x + self._sa_block(self.norm1(x), attn_mask)
+            x = x + self._ff_block(self.norm2(x))
+        else:
+            x = self.norm1(x + self._sa_block(x, attn_mask))
+            x = self.norm2(x + self._ff_block(x))
 
-        x_attn_norm = self.layer_norm_2(x_attn)
-        x_ffn = x_attn + self.dropout(self.feature_transformation(x_attn_norm))
-        """x_attn = self.layer_norm_1(
-            x + self.dropout(self.self_attention(x, x, x, attention_mask))
-        )
-        x_ffn = self.layer_norm_2(x_attn + self.dropout(self.feature_transformation(x_attn)))"""
-        return x_ffn
+        return x
+
+class TransformerEncoder(nn.Module):
+    def __init__(
+        self, 
+        encoder_layer, 
+        num_layers, 
+        norm=None,
+        ):
+        super().__init__()
+        self.layers = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(num_layers)])
+        self.norm = norm
+
+    def forward(self, src: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+
+        output = src
+
+        for mod in self.layers:
+            output = mod(output, attn_mask=attn_mask)
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output
 
 
 class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
-        input_dim,
-        num_heads,
-        feature_dim,
-        dropout=0.1,
-    ):
+        d_model,
+        n_heads,
+        dim_feedforward,
+        dropout,
+        norm_first = False,
+        ):
         super().__init__()
-        self.dropout = nn.Dropout(dropout)
+        self.norm_first = norm_first
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
 
-        self.self_attention = MultiHeadAttention(
-            input_dim, num_heads, mask_future=True
+        self.self_attn = MultiHeadAttention(d_model, n_heads)
+
+        self.cross_attn = MultiHeadAttention(d_model, n_heads)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model),
         )
 
-        self.encoder_attention = MultiHeadAttention(
-            input_dim, num_heads
-        )
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
 
-        self.feature_transformation = nn.Sequential(
-            OrderedDict(
-                [
-                    ("linear1", nn.Linear(input_dim, feature_dim)),
-                    ("relu", nn.ReLU()),
-                    ("linear2", nn.Linear(feature_dim, input_dim)),
-                ]
-            )
-        )
+    def _sa_block(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
+        x = self.self_attn(x, x, x, attn_mask=attn_mask, mask_future=mask_future)
+        return self.dropout1(x)
 
-        self.layer_norm_1 = nn.LayerNorm(input_dim)
-        self.layer_norm_2 = nn.LayerNorm(input_dim)
-        self.layer_norm_3 = nn.LayerNorm(input_dim)
+    def _ca_block(self, x: torch.Tensor, enc_x: torch.Tensor, enc_attn_mask: Optional[torch.Tensor]) -> torch.Tensor:
+        x = self.cross_attn(x, enc_x, enc_x, attn_mask=enc_attn_mask)
+        return self.dropout2(x)
 
-    def forward(
-        self, x, encoder_output, encoder_attention_mask=None, attention_mask=None
-    ):
-        x_norm = self.layer_norm_1(x)
-        x_attn = x + self.dropout(self.self_attention(x_norm, x_norm, x_norm, attention_mask))
+    def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
+        return self.dropout3(self.ffn(x))
 
-        x_attn_norm = self.layer_norm_2(x_attn)
-        x_enc_norm = self.layer_norm_2(encoder_output)
-        x_dec = x_attn + self.dropout(self.encoder_attention(x_attn_norm, x_enc_norm, x_enc_norm, encoder_attention_mask))
+    def forward(self, x, enc_x, enc_attn_mask: Optional[torch.Tensor] = None, dec_attn_mask: Optional[torch.Tensor] = None, 
+                mask_future: bool = True) -> torch.Tensor:
 
-        x_dec_norm = self.layer_norm_3(x_dec)
-        x_out = x_dec + self.dropout(self.feature_transformation(x_dec_norm))
-        """x_enc = self.layer_norm_1(
-            x + self.dropout(self.self_attention(x, x, x, attention_mask))
-        )
-        x_dec = self.layer_norm_2(
-            x_enc
-            + self.dropout(
-                self.encoder_attention(
-                    x_enc, encoder_output, encoder_output, encoder_attention_mask
-                )
-            )
-        )
-        x_out = self.layer_norm_3(x_dec + self.dropout(self.feature_transformation(x_dec)))"""
-        return x_out
+        # Pre Norm as in Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
+        if self.norm_first:
+            x = x + self._sa_block(self.norm1(x), attn_mask=dec_attn_mask, mask_future=mask_future)
+            x = x + self._ca_block(self.norm2(x), enc_x, enc_attn_mask=enc_attn_mask)
+            x = x + self._ff_block(self.norm3(x))
+        else:
+            x = self.norm1(x + self._sa_block(x, attn_mask=dec_attn_mask, mask_future=mask_future))
+            x = self.norm2(x + self._ca_block(x, enc_x, enc_attn_mask=enc_attn_mask))
+            x = self.norm3(x + self._ff_block(x))
 
+        return x
+    
+class TransformerDecoder(nn.Module):
+    def __init__(
+        self, 
+        decoder_layer, 
+        num_layers, 
+        norm=None
+        ):
+        super().__init__()
+        self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
+        self.norm = norm
+
+    def forward(self, tgt: torch.Tensor, enc_x: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None,
+                dec_attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
+
+        output = tgt
+
+        for mod in self.layers:
+            output = mod(output, enc_x, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask, mask_future=mask_future)
+
+        if self.norm is not None:
+            output = self.norm(output)
+
+        return output
 
 class TransformerModel(nn.Module):
     def __init__(
         self,
-        vocab_size,
-        d_model,
-        n_heads,
-        num_encoder_layers,
-        num_decoder_layers,
-        dim_feedforward,
-        dropout,
-        max_len,
-    ):
+        vocab_size: int,
+        d_model: int,
+        n_heads: int,
+        num_encoder_layers: int,
+        num_decoder_layers: int,
+        dim_feedforward: int,
+        dropout: float,
+        max_len: int,
+        ):
         super().__init__()
         self.d_model = d_model
         self.max_len = max_len
 
+        self.padding_idx = 0
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(d_model, max_len)
 
-        self.encoder_layers = nn.ModuleList(
-            [
-                BaseTransformerLayer(d_model, n_heads, dim_feedforward, dropout=dropout)
-                for _ in range(num_encoder_layers)
-            ]
-        )
+        encoder_layer = TransformerEncoderLayer(d_model, n_heads, dim_feedforward, dropout)
+        decoder_layer = TransformerDecoderLayer(d_model, n_heads, dim_feedforward, dropout)
 
-        self.decoder_layers = nn.ModuleList(
-            [
-                TransformerDecoderLayer(
-                    d_model, n_heads, dim_feedforward, dropout=dropout
-                )
-                for _ in range(num_decoder_layers)
-            ]
-        )
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers)
+        self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers)
 
-        self.linear = nn.Linear(d_model, vocab_size)  # batch x seq_len x vocab_size
+        self.linear = nn.Linear(d_model, vocab_size, bias=False)
 
-        self.init_weights()
+        self._reset_parameters()
+        self._init_weights()
 
-    def init_weights(self) -> None:
-        initrange = 0.1
-        self.embedding.weight.data.uniform_(-initrange, initrange)
-        self.linear.bias.data.zero_()
-        self.linear.weight.data.uniform_(-initrange, initrange)
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
 
-    def forward(self, x, y, encoder_attention_mask=None, decoder_attention_mask=None):
-        x = self.positional_encoding(self.embedding(x) * sqrt(self.d_model))
-        y = self.positional_encoding(self.embedding(y) * sqrt(self.d_model))
+    def _init_weights(self) -> None:
+        # init and scale weights 
+        # TODO: e.g. Kaparthy uses 0.02, maybe try that
+        nn.init.normal_(self.embedding.weight, std=1/sqrt(self.d_model)) # (d_model,std) -> (512, 0.0442), (256, 0.0625), (128, 0.0884)    
+        # remove bias and tie weights
+        if self.linear.bias is not None:
+            nn.init.zeros_(self.linear.bias)
+        self.linear.weight = self.embedding.weight
 
-        for layer in self.encoder_layers:
-            x = layer(x, encoder_attention_mask)
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None, 
+                dec_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    
+        x_enc = self.positional_encoding(self.embedding(src))
+        x_dec = self.positional_encoding(self.embedding(tgt))
 
-        for layer in self.decoder_layers:
-            y = layer(y, x, encoder_attention_mask, decoder_attention_mask)
+        x_enc = self.encoder(x_enc, attn_mask=enc_attn_mask)
+        x_dec = self.decoder(x_dec, x_enc, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)
 
-        return self.linear(y)
+        return self.linear(x_dec)
+    
+def uniform_unit_scaling_initializer(tensor: torch.Tensor, nonlinearity: str = "linear") -> torch.Tensor:
+    """
+    Initalizer which preserves output variance (i.e. doesn't scale variance) for 
+    approximately gaussian distributed inputs.
+
+    When initializing a deep network, it is in principle advantageous to keep
+    the scale of the input variance constant, so it does not explode or diminish
+    by reaching the final layer. If the input is `x` and the operation `x * W`,
+    and we want to initialize `W` uniformly at random, we need to pick `W` from
+
+        [-sqrt(3) / sqrt(dim), sqrt(3) / sqrt(dim)]
+
+    to keep the scale intact, where `dim = W.shape[0]` (the size of the input).
+    A similar calculation for convolutional networks gives an analogous result
+    with `dim` equal to the product of the first 3 dimensions.  When
+    nonlinearities are present, we need to multiply this by a constant factor 
+    called `gain`. See (Sussillo et al., 2014) for deeper motivation.
+
+    Args:
+        tensor : `torch.Tensor`, required. 
+            The tensor to initialise.
+        nonlinearity : `str`, optional (default = `"linear"`)
+            The non-linearity which is performed after the projection that this
+            tensor is involved in. This must be the name of a function contained
+            in the `torch.nn.functional` package.
+            
+    References:
+        [Sussillo et al., 2014](https://arxiv.org/abs/1412.6558)
+        ([pdf](http://arxiv.org/pdf/1412.6558.pdf))
+    
+    See https://www.tensorflow.org/api_docs/python/tf/compat/v1/uniform_unit_scaling_initializer 
+    for the original code.
+    """
+    
+    size = 1.0
+    # Estimating input size is not possible to do perfectly, but we try.
+    # The estimate, obtained by multiplying all dimensions but the last one,
+    # is the right thing for matrix multiply and convolutions (see above)
+    for dimension in list(tensor.size())[:-1]:
+        size *= dimension
+
+    # Avoid errors when initializing zero-size tensors
+    size = max(1.0, size)
+    activation_scaling = torch.nn.init.calculate_gain(nonlinearity, tensor)
+    max_value = sqrt(3 / size) * activation_scaling
+
+    return tensor.data.uniform_(-max_value, max_value)
