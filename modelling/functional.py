@@ -14,9 +14,10 @@ class TransformerEncoderLayer(nn.Module):
         n_heads,
         dim_feedforward,
         dropout,
-        norm_first=False,
+        norm_first: bool = False,
         ):
         super().__init__()
+        self.dropout = dropout
         self.norm_first = norm_first
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
@@ -29,11 +30,12 @@ class TransformerEncoderLayer(nn.Module):
             nn.Linear(dim_feedforward, d_model),
         )
         # see https://github.com/tensorflow/tensor2tensor/blob/bafdc1b67730430d38d6ab802cbd51f9d053ba2e/tensor2tensor/layers/common_hparams.py#L144
-        self.norm1 = nn.LayerNorm(d_model) # eps=1e-6, bool=True 
-        self.norm2 = nn.LayerNorm(d_model) # eps=1e-6, bool=True
+        # pytorch uses eps=1e-5
+        self.norm1 = nn.LayerNorm(d_model, eps=1e-5, bool=True) # eps=1e-6, bool=True 
+        self.norm2 = nn.LayerNorm(d_model, eps=1e-5, bool=True) # eps=1e-6, bool=True
     
-    def _sa_block(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
-        x = self.self_attn(x, x, x, attn_mask=attn_mask)
+    def _sa_block(self, x: torch.Tensor, attn_mask: torch.Tensor, dropout: float) -> torch.Tensor:
+        x = self.self_attn(x, x, x, attn_mask=attn_mask, dropout=dropout)
         return self.dropout1(x)
 
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
@@ -43,10 +45,10 @@ class TransformerEncoderLayer(nn.Module):
 
         # Pre Norm as in Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), attn_mask)
+            x = x + self._sa_block(self.norm1(x), attn_mask, dropout=self.dropout)
             x = x + self._ff_block(self.norm2(x))
         else:
-            x = self.norm1(x + self._sa_block(x, attn_mask))
+            x = self.norm1(x + self._sa_block(x, attn_mask, dropout=self.dropout))
             x = self.norm2(x + self._ff_block(x))
 
         return x
@@ -56,7 +58,7 @@ class TransformerEncoder(nn.Module):
         self, 
         encoder_layer, 
         num_layers, 
-        norm=None,
+        norm: Optional[nn.Module] = None,
         ):
         super().__init__()
         self.layers = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(num_layers)])
@@ -82,7 +84,7 @@ class TransformerDecoderLayer(nn.Module):
         n_heads,
         dim_feedforward,
         dropout,
-        norm_first = False,
+        norm_first: bool = False,
         ):
         super().__init__()
         self.norm_first = norm_first
@@ -100,9 +102,9 @@ class TransformerDecoderLayer(nn.Module):
             nn.Linear(dim_feedforward, d_model),
         )
 
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
+        self.norm1 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
+        self.norm2 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
+        self.norm3 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
 
     def _sa_block(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
         x = self.self_attn(x, x, x, attn_mask=attn_mask, mask_future=mask_future)
@@ -135,7 +137,7 @@ class TransformerDecoder(nn.Module):
         self, 
         decoder_layer, 
         num_layers, 
-        norm=None
+        norm: Optional[nn.Module] = None,
         ):
         super().__init__()
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
@@ -180,10 +182,10 @@ class TransformerModel(nn.Module):
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers)
 
-        self.linear = nn.Linear(d_model, vocab_size, bias=False)
+        self.linear = nn.Linear(d_model, vocab_size, bias=True) # not sure if False or True 
 
         self._reset_parameters()
-        self._init_weights()
+        #self._init_weights()
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -202,8 +204,8 @@ class TransformerModel(nn.Module):
     def forward(self, src: torch.Tensor, tgt: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None, 
                 dec_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     
-        x_enc = self.positional_encoding(self.embedding(src))
-        x_dec = self.positional_encoding(self.embedding(tgt))
+        x_enc = self.positional_encoding(self.embedding(src) * sqrt(self.d_model))
+        x_dec = self.positional_encoding(self.embedding(tgt) * sqrt(self.d_model))
 
         x_enc = self.encoder(x_enc, attn_mask=enc_attn_mask)
         x_dec = self.decoder(x_dec, x_enc, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)

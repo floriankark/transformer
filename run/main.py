@@ -8,9 +8,10 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import numpy as np
 from dataset import MyDataset
+from utils import make_mask
 from transformers import GPT2Tokenizer
 from torch.cuda.amp import GradScaler, autocast
-from utils import make_mask
+scaler = GradScaler()
 
 # hyperparameters from https://github.com/tensorflow/tensor2tensor/blob/bafdc1b67730430d38d6ab802cbd51f9d053ba2e/tensor2tensor/layers/common_hparams.py
 label_smoothing=0.1
@@ -24,7 +25,7 @@ learning_rate=0.1
 
 d_model = 512
 dim_feedforward = 4*d_model
-batch_size = 128
+batch_size = 32
 src_pad_idx = 0
 num_epochs = 5
 vocab_size = 50000
@@ -49,8 +50,8 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 1000000))
-train_loader = DataLoader(trainset_1, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 100000))
+train_loader = DataLoader(trainset_1, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True) # later change to shuffle=True
 #valset_1 = torch.utils.data.Subset(val_dataset, range(0, 1000))
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
@@ -69,13 +70,11 @@ optimizer_grouped_parameters = [
 ]
 
 # try adamw with lr = 9e-4
+# with lr scheduler, use lr = 0.1 or 1.0
 optimizer = AdamW(optimizer_grouped_parameters, lr=0.1, betas=(0.9, 0.98), eps=1e-09)
-#optimizer = AdamW(optimizer_grouped_parameters, lr=0.00001, betas=(0.9, 0.98), eps=1e-09)
-#optimizer = AdamW(model.parameters(), lr=0.0007, betas=(0.9, 0.98), eps=1e-06, weight_decay=0.0) #same effect as above
-#optimizer = Adam(optimizer_grouped_parameters, lr=learning_rate, betas=(beta1, beta2), eps=epsilon)
-lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000) # 4000, depending on train dataset size
+#optimizer = Adam(optimizer_grouped_parameters, lr=1, betas=(beta1, beta2), eps=epsilon)
+lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=400) # 400 for subset, 4000 for full dataset
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=label_smoothing)
-scaler = GradScaler()
 
 def validation(model, val_loader, src_pad_idx, vocab_size, device):
     print("Validation processing...")
@@ -98,7 +97,8 @@ def validation(model, val_loader, src_pad_idx, vocab_size, device):
             del src_input, trg_input, trg_output, e_mask, d_mask, output
 
     mean_valid_loss = np.mean(valid_losses)
-    print("Validation loss: ", mean_valid_loss)
+    msg = f"Validation loss: {mean_valid_loss:.3f}"
+    print(msg)
     return mean_valid_loss
 
 print("Training...")
@@ -138,10 +138,9 @@ for epoch in range(num_epochs):
     loss_curr_epoch = np.mean(loss_step)
     valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
 
-    msg = (
-        f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f}  validation loss: {valid_loss_curr_epoch:.3f} |'
-        f' ppl: {np.exp(loss_curr_epoch):.2f}')
-    #print(msg)
+    msg = (f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f}' 
+           f' validation loss: {valid_loss_curr_epoch:.3f} | ppl: {np.exp(loss_curr_epoch):.2f}')
+    print(msg)
     loss_list.append(loss_curr_epoch)
     valid_loss_list.append(valid_loss_curr_epoch)
 
