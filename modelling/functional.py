@@ -6,6 +6,7 @@ from typing import Optional
 
 from modelling.attention import MultiHeadAttention
 from modelling.positional_encoding import PositionalEncoding
+from modelling.word_embedding import WordEmbedding
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(
@@ -172,9 +173,9 @@ class TransformerModel(nn.Module):
         self.d_model = d_model
         self.max_len = max_len
 
-        self.padding_idx = 0
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.positional_encoding = PositionalEncoding(d_model, max_len)
+        self.src_embed = WordEmbedding(vocab_size, d_model)
+        self.tgt_embed = WordEmbedding(vocab_size, d_model)
+        self.pos_enc = PositionalEncoding(d_model, max_len, dropout)
 
         encoder_layer = TransformerEncoderLayer(d_model, n_heads, dim_feedforward, dropout)
         decoder_layer = TransformerDecoderLayer(d_model, n_heads, dim_feedforward, dropout)
@@ -185,27 +186,22 @@ class TransformerModel(nn.Module):
         self.linear = nn.Linear(d_model, vocab_size, bias=True) # not sure if False or True 
 
         self._reset_parameters()
-        #self._init_weights()
+        self._tie_weights()
 
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-
-    def _init_weights(self) -> None:
-        # init and scale weights 
-        # TODO: e.g. Kaparthy uses 0.02, maybe try that
-        nn.init.normal_(self.embedding.weight, std=1/sqrt(self.d_model)) # (d_model,std) -> (512, 0.0442), (256, 0.0625), (128, 0.0884)    
-        # remove bias and tie weights
-        if self.linear.bias is not None:
-            nn.init.zeros_(self.linear.bias)
-        self.linear.weight = self.embedding.weight
+    
+    def _tie_weights(self):
+        self.src_embed.lut.weight = self.tgt_embed.lut.weight
+        self.linear.weight = self.tgt_embed.lut.weight
 
     def forward(self, src: torch.Tensor, tgt: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None, 
                 dec_attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     
-        x_enc = self.positional_encoding(self.embedding(src) * sqrt(self.d_model))
-        x_dec = self.positional_encoding(self.embedding(tgt) * sqrt(self.d_model))
+        x_enc = self.pos_enc(self.src_embed(src))
+        x_dec = self.pos_enc(self.tgt_embed(tgt))
 
         x_enc = self.encoder(x_enc, attn_mask=enc_attn_mask)
         x_dec = self.decoder(x_dec, x_enc, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)
@@ -259,3 +255,13 @@ def uniform_unit_scaling_initializer(tensor: torch.Tensor, nonlinearity: str = "
     max_value = sqrt(3 / size) * activation_scaling
 
     return tensor.data.uniform_(-max_value, max_value)
+
+# TODO: check if this actually is correct
+def _init_weights(self) -> None:
+    # init and scale weights 
+    # TODO: e.g. Kaparthy uses 0.02, maybe try that
+    nn.init.normal_(self.embedding.weight, std=1/sqrt(self.d_model)) # (d_model,std) -> (512, 0.0442), (256, 0.0625), (128, 0.0884)    
+    # remove bias and tie weights
+    if self.linear.bias is not None:
+        nn.init.zeros_(self.linear.bias)
+    self.linear.weight = self.embedding.weight
