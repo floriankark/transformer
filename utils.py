@@ -1,6 +1,7 @@
 import re
 from collections import defaultdict, Counter
 import itertools
+import torch
 
 
 def word_frequency(corpus):
@@ -62,3 +63,20 @@ def make_mask(src_input, trg_input, pad_id):
     e_mask = (src_input != pad_id).int()
     d_mask = (trg_input != pad_id).int()
     return e_mask, d_mask
+
+def collate(batch: list) -> dict:
+    """
+    Function to collate the batch.
+    
+    Args:
+        batch (list): List of examples from the dataset.
+    Returns:
+        features (dict): Features for the batch, with each feature being a torch.tensor of shape (batch_size, seq_len).
+    """
+    features = {
+        'src_input': torch.tensor([itm['source'] for itm in batch]),
+        'tgt_input': torch.tensor([itm['target_input'] for itm in batch]),
+        'tgt_output': torch.tensor([itm['target_output'] for itm in batch]),
+    }
+
+    return features

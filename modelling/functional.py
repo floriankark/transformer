@@ -23,20 +23,21 @@ class TransformerEncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-        self.self_attn = MultiHeadAttention(d_model, n_heads)
+        self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
 
         self.ffn = nn.Sequential(
             nn.Linear(d_model, dim_feedforward),
             nn.ReLU(),
             nn.Linear(dim_feedforward, d_model),
+            nn.Dropout(dropout),
         )
         # see https://github.com/tensorflow/tensor2tensor/blob/bafdc1b67730430d38d6ab802cbd51f9d053ba2e/tensor2tensor/layers/common_hparams.py#L144
         # pytorch uses eps=1e-5
-        self.norm1 = nn.LayerNorm(d_model, eps=1e-5, bool=True) # eps=1e-6, bool=True 
-        self.norm2 = nn.LayerNorm(d_model, eps=1e-5, bool=True) # eps=1e-6, bool=True
+        self.norm1 = nn.LayerNorm(d_model, eps=1e-6) # eps=1e-6, bias=True 
+        self.norm2 = nn.LayerNorm(d_model, eps=1e-6) # eps=1e-6, bias=True
     
-    def _sa_block(self, x: torch.Tensor, attn_mask: torch.Tensor, dropout: float) -> torch.Tensor:
-        x = self.self_attn(x, x, x, attn_mask=attn_mask, dropout=dropout)
+    def _sa_block(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
+        x = self.self_attn(x, x, x, attn_mask=attn_mask)
         return self.dropout1(x)
 
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
@@ -46,10 +47,10 @@ class TransformerEncoderLayer(nn.Module):
 
         # Pre Norm as in Fig. 1 of https://arxiv.org/pdf/2002.04745v1.pdf
         if self.norm_first:
-            x = x + self._sa_block(self.norm1(x), attn_mask, dropout=self.dropout)
+            x = x + self._sa_block(self.norm1(x), attn_mask)
             x = x + self._ff_block(self.norm2(x))
         else:
-            x = self.norm1(x + self._sa_block(x, attn_mask, dropout=self.dropout))
+            x = self.norm1(x + self._sa_block(x, attn_mask))
             x = self.norm2(x + self._ff_block(x))
 
         return x
@@ -93,19 +94,20 @@ class TransformerDecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
 
-        self.self_attn = MultiHeadAttention(d_model, n_heads)
+        self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
 
-        self.cross_attn = MultiHeadAttention(d_model, n_heads)
+        self.cross_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
 
         self.ffn = nn.Sequential(
             nn.Linear(d_model, dim_feedforward),
             nn.ReLU(),
             nn.Linear(dim_feedforward, d_model),
+            nn.Dropout(dropout),
         )
 
-        self.norm1 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
-        self.norm2 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
-        self.norm3 = nn.LayerNorm(d_model, eps=1e-5, bool=True)
+        self.norm1 = nn.LayerNorm(d_model, eps=1e-6)
+        self.norm2 = nn.LayerNorm(d_model, eps=1e-6)
+        self.norm3 = nn.LayerNorm(d_model, eps=1e-6)
 
     def _sa_block(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
         x = self.self_attn(x, x, x, attn_mask=attn_mask, mask_future=mask_future)
@@ -255,13 +257,3 @@ def uniform_unit_scaling_initializer(tensor: torch.Tensor, nonlinearity: str = "
     max_value = sqrt(3 / size) * activation_scaling
 
     return tensor.data.uniform_(-max_value, max_value)
-
-# TODO: check if this actually is correct
-def _init_weights(self) -> None:
-    # init and scale weights 
-    # TODO: e.g. Kaparthy uses 0.02, maybe try that
-    nn.init.normal_(self.embedding.weight, std=1/sqrt(self.d_model)) # (d_model,std) -> (512, 0.0442), (256, 0.0625), (128, 0.0884)    
-    # remove bias and tie weights
-    if self.linear.bias is not None:
-        nn.init.zeros_(self.linear.bias)
-    self.linear.weight = self.embedding.weight

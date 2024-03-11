@@ -8,7 +8,7 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import numpy as np
 from dataset import MyDataset
-from utils import make_mask
+from utils import make_mask, collate
 from transformers import GPT2Tokenizer
 from torch.cuda.amp import GradScaler, autocast
 scaler = GradScaler()
@@ -25,10 +25,13 @@ learning_rate=0.1
 
 d_model = 512
 dim_feedforward = 4*d_model
-batch_size = 32
+batch_size = 1024 # the larger the better convergence, but the slower the training (1024 max for a100) and maybe worse generalization
 src_pad_idx = 0
-num_epochs = 5
-vocab_size = 50000
+num_epochs = 20
+# Always but most efficient with multiples of 8; on A100, multiples of 64.
+# Table 1. https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html
+vocab_size = 50048 # nearest multiple of 64 see https://twitter.com/karpathy/status/1621578354024677377
+#compile_model = True
 
 model = TransformerModel(
     vocab_size=vocab_size,
@@ -41,6 +44,13 @@ model = TransformerModel(
     max_len=64
 )
 
+# model with torch.compile results in a significant speedup. Speedup mainly comes from reducing Python overhead and GPU read/writes, speedup may vary on factors such as model architecture and batch size. 
+# For example, if architecture is simple and the amount of data is large, then the bottleneck would be GPU compute and the observed speedup may be less significant.
+# Different speedup results depending on "mode". The "reduce-overhead" mode uses CUDA graphs to further reduce the overhead of Python. Experiment with different modes to maximize speedup. More: https://pytorch.org/get-started/pytorch-2.0/#user-experience
+# First few iterations torch.compile is significantly slower than the other runs, although it is much faster than the first run. This is because the "reduce-overhead" mode runs a few warm-up iterations for CUDA graphs.
+#if compile_model:
+    #model = torch.compile(model, mode="reduce-overhead")
+
 
 train_data = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
 val_data = torch.load("/gpfs/project/flkar101/transformer_project/data/val_dataset.pt")
@@ -50,10 +60,10 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 100000))
-train_loader = DataLoader(trainset_1, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True) # later change to shuffle=True
+#trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 1000000))
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, collate_fn=collate)
 #valset_1 = torch.utils.data.Subset(val_dataset, range(0, 1000))
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, collate_fn=collate)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
@@ -69,11 +79,10 @@ optimizer_grouped_parameters = [
                 if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 0.01}
 ]
 
-# try adamw with lr = 9e-4
-# with lr scheduler, use lr = 0.1 or 1.0
-optimizer = AdamW(optimizer_grouped_parameters, lr=0.1, betas=(0.9, 0.98), eps=1e-09)
-#optimizer = Adam(optimizer_grouped_parameters, lr=1, betas=(beta1, beta2), eps=epsilon)
-lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=400) # 400 for subset, 4000 for full dataset
+# small batches use lr = 0.5 and large batches use lr = 1.0 -> finding verified by https://arxiv.org/pdf/1806.00187.pdf
+optimizer = AdamW(optimizer_grouped_parameters, lr=1.0, betas=(0.9, 0.98), eps=1e-09)
+accumulation_steps = 8 # simulating training on this number of gpu nodes
+lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000)
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=label_smoothing)
 
 def validation(model, val_loader, src_pad_idx, vocab_size, device):
@@ -83,18 +92,18 @@ def validation(model, val_loader, src_pad_idx, vocab_size, device):
 
     with torch.no_grad():
         for i, batch in tqdm(enumerate(val_loader)):
-            src_input, trg_input, trg_output = torch.stack(batch['source']), torch.stack(batch['target_input']), torch.stack(batch['target_output'])
-            src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)
+            src_input, tgt_input, tgt_output = batch['src_input'], batch['tgt_input'], batch['tgt_output']
+            src_input, tgt_input, tgt_output = src_input.to(device), tgt_input.to(device), tgt_output.to(device)
 
-            e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
+            e_mask, d_mask = make_mask(src_input, tgt_input, src_pad_idx)
             e_mask, d_mask = e_mask.to(device), d_mask.to(device)
 
-            output = model(src_input, e_mask, trg_input, d_mask)
+            output = model(src_input, e_mask, tgt_input, d_mask)
 
-            loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
+            loss = criterion(output.view(-1, vocab_size), tgt_output.view(-1))
 
             valid_losses.append(loss.item())
-            del src_input, trg_input, trg_output, e_mask, d_mask, output
+            del src_input, tgt_input, tgt_output, e_mask, d_mask, output
 
     mean_valid_loss = np.mean(valid_losses)
     msg = f"Validation loss: {mean_valid_loss:.3f}"
@@ -105,47 +114,58 @@ print("Training...")
 
 best_loss = float('inf')
 validloss_curr_epoch = 0
-loss_list = []
+loss_step = []
+mean_loss_list = []
 valid_loss_list = []
 for epoch in range(num_epochs):
+    loss_epoch = []
     model.train()
-    loss_step = []
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
-    for batch in pbar:
-        src_input, trg_input, trg_output = torch.stack(batch['source']), torch.stack(batch['target_input']), torch.stack(batch['target_output'])
-        e_mask, d_mask = make_mask(src_input, trg_input, src_pad_idx)
+    for i, batch in enumerate(pbar):
+        src_input, tgt_input, tgt_output = batch['src_input'], batch['tgt_input'], batch['tgt_output']
+        e_mask, d_mask = make_mask(src_input, tgt_input, src_pad_idx)
 
-        src_input, trg_input, trg_output = src_input.to(device), trg_input.to(device), trg_output.to(device)
-        e_mask, d_mask = e_mask.to(src_input.device), d_mask.to(trg_input.device)
+        src_input, tgt_input, tgt_output = src_input.to(device), tgt_input.to(device), tgt_output.to(device)
+        e_mask, d_mask = e_mask.to(device), d_mask.to(device)
 
-        optimizer.zero_grad()
+        # TODO: check if set_to_none=True has any sideeffects, if yes, remove it
+        optimizer.zero_grad(set_to_none=True) if i % accumulation_steps == 0 else None
 
         with autocast(dtype=torch.float16):
-            output = model(src_input, trg_input, e_mask, d_mask)
-            loss = criterion(output.view(-1, vocab_size), trg_output.view(-1))
+            output = model(src_input, tgt_input, e_mask, d_mask)
+            loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
 
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        
-        lr_scheduler.step()
+
+        # gradient accumulation
+        if ((i+1) % accumulation_steps == 0 or i+1 == len(train_loader)):
+
+            # gradient clipping
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            scaler.step(optimizer)
+            scaler.update()
+            lr_scheduler.step()
 
         loss_step.append(loss.item())
+        loss_epoch.append(loss.item())
 
-        pbar.set_postfix({'loss': loss.item(), 'lr': round(lr_scheduler.get_last_lr()[0], 2)}) # optimizer.param_groups[0]['lr']})
+        pbar.set_postfix({'loss': round(loss.item(), 2), 'lr': round(lr_scheduler.get_last_lr()[0], 10)})
     
-    loss_curr_epoch = np.mean(loss_step)
+    loss_curr_epoch = np.mean(loss_epoch)
     valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
 
     msg = (f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f}' 
-           f' validation loss: {valid_loss_curr_epoch:.3f} | ppl: {np.exp(loss_curr_epoch):.2f}')
+           f' validation loss: {valid_loss_curr_epoch:.3f} | ppl: {np.exp(loss_curr_epoch):.2f} |')
     print(msg)
-    loss_list.append(loss_curr_epoch)
+    mean_loss_list.append(loss_curr_epoch)
     valid_loss_list.append(valid_loss_curr_epoch)
 
     # safe lists
-    np.save("/gpfs/project/flkar101/transformer_project/results/loss_list.npy", loss_list)
+    np.save("/gpfs/project/flkar101/transformer_project/results/loss_list.npy", loss_step)
+    np.save("/gpfs/project/flkar101/transformer_project/results/mean_loss_list.npy", mean_loss_list)
     np.save("/gpfs/project/flkar101/transformer_project/results/valid_loss_list.npy", valid_loss_list)
 
     if validloss_curr_epoch < best_loss:
