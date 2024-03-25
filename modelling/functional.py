@@ -29,11 +29,11 @@ class TransformerEncoderLayer(nn.Module):
         n_heads,
         dim_feedforward,
         dropout,
-        norm_first: bool = False,
+        norm_first,
         ):
         super().__init__()
         self.dropout = dropout
-        self.norm_first = True
+        self.norm_first = norm_first
 
         self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
 
@@ -74,10 +74,13 @@ class TransformerEncoder(nn.Module):
         d_model, 
         n_heads, 
         dim_feedforward, 
-        dropout
+        dropout,
+        norm_first,
         ):
         super().__init__()
-        self.layers = nn.ModuleList([TransformerEncoderLayer(d_model, n_heads, dim_feedforward, dropout) for _ in range(num_layers)])
+        self.layers = nn.ModuleList([TransformerEncoderLayer(d_model, n_heads, dim_feedforward, dropout, norm_first) for _ in range(num_layers)])
+        self.norm = LayerNorm(d_model, bias=False)
+        self.norm_first = norm_first
 
     def forward(self, src: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
 
@@ -85,6 +88,9 @@ class TransformerEncoder(nn.Module):
 
         for mod in self.layers:
             output = mod(output, attn_mask=attn_mask)
+
+        if self.norm_first:
+            output = self.norm(output)
 
         return output
 
@@ -96,10 +102,10 @@ class TransformerDecoderLayer(nn.Module):
         n_heads,
         dim_feedforward,
         dropout,
-        norm_first: bool = False,
+        norm_first,
         ):
         super().__init__()
-        self.norm_first = True
+        self.norm_first = norm_first
 
         self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
 
@@ -149,9 +155,12 @@ class TransformerDecoder(nn.Module):
         n_heads, 
         dim_feedforward, 
         dropout,
+        norm_first,
         ):
         super().__init__()
-        self.layers = nn.ModuleList([TransformerDecoderLayer(d_model, n_heads, dim_feedforward, dropout) for _ in range(num_layers)])
+        self.layers = nn.ModuleList([TransformerDecoderLayer(d_model, n_heads, dim_feedforward, dropout, norm_first) for _ in range(num_layers)])
+        self.norm = LayerNorm(d_model, bias=False)
+        self.norm_first = norm_first
 
     def forward(self, tgt: torch.Tensor, enc_x: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None,
                 dec_attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
@@ -160,6 +169,9 @@ class TransformerDecoder(nn.Module):
 
         for mod in self.layers:
             output = mod(output, enc_x, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask, mask_future=mask_future)
+
+        if self.norm_first:
+            output = self.norm(output)
 
         return output
 
@@ -174,6 +186,7 @@ class TransformerModel(nn.Module):
         dim_feedforward: int,
         dropout: float,
         max_len: int,
+        norm_first: bool = False,
         ):
         super().__init__()
         self.d_model = d_model
@@ -185,8 +198,8 @@ class TransformerModel(nn.Module):
         self.src_dropout = nn.Dropout(dropout)
         self.tgt_dropout = nn.Dropout(dropout)
 
-        self.encoder = TransformerEncoder(num_encoder_layers, d_model, n_heads, dim_feedforward, dropout)
-        self.decoder = TransformerDecoder(num_decoder_layers, d_model, n_heads, dim_feedforward, dropout)
+        self.encoder = TransformerEncoder(num_encoder_layers, d_model, n_heads, dim_feedforward, dropout, norm_first)
+        self.decoder = TransformerDecoder(num_decoder_layers, d_model, n_heads, dim_feedforward, dropout, norm_first)
 
         self.linear = nn.Linear(d_model, vocab_size, bias=False)
 

@@ -44,7 +44,8 @@ model = TransformerModel(
     num_decoder_layers=6,
     dim_feedforward=dim_feedforward,
     dropout=0.1,
-    max_len=64
+    max_len=64,
+    norm_first=True # enables pre-norm
 )
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
