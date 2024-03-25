@@ -78,7 +78,6 @@ class TransformerEncoder(nn.Module):
         ):
         super().__init__()
         self.layers = nn.ModuleList([TransformerEncoderLayer(d_model, n_heads, dim_feedforward, dropout) for _ in range(num_layers)])
-        self.norm = LayerNorm(d_model, bias=False)
 
     def forward(self, src: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
 
@@ -87,7 +86,7 @@ class TransformerEncoder(nn.Module):
         for mod in self.layers:
             output = mod(output, attn_mask=attn_mask)
 
-        return self.norm(output)
+        return output
 
 
 class TransformerDecoderLayer(nn.Module):
@@ -153,7 +152,6 @@ class TransformerDecoder(nn.Module):
         ):
         super().__init__()
         self.layers = nn.ModuleList([TransformerDecoderLayer(d_model, n_heads, dim_feedforward, dropout) for _ in range(num_layers)])
-        self.norm = LayerNorm(d_model, bias=False)
 
     def forward(self, tgt: torch.Tensor, enc_x: torch.Tensor, enc_attn_mask: Optional[torch.Tensor] = None,
                 dec_attn_mask: Optional[torch.Tensor] = None, mask_future: bool = True) -> torch.Tensor:
@@ -163,7 +161,7 @@ class TransformerDecoder(nn.Module):
         for mod in self.layers:
             output = mod(output, enc_x, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask, mask_future=mask_future)
 
-        return self.norm(output)
+        return output
 
 class TransformerModel(nn.Module):
     def __init__(
