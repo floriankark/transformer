@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
-from torch.optim import AdamW
+from torch.optim import AdamW, Adam
 from modelling.lr_scheduler import TransformerLRScheduler
 from modelling.functional import TransformerModel
 from tqdm import tqdm
@@ -24,17 +24,13 @@ learning_rate=0.1
 
 d_model = 512
 dim_feedforward = 4*d_model
-batch_size = 1024 # the larger the better convergence, but the slower the training (1024 max for a100) and maybe worse generalization
+batch_size = 512 # the larger the better convergence, but the slower the training (1024 max for a100) and maybe worse generalization
 src_pad_idx = 0
-num_epochs = 30
-grad_clip = 1.0
+num_epochs = 20
 # Always but most efficient with multiples of 8; on A100, multiples of 64.
 # Table 1. https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html
 vocab_size = 50048 # nearest multiple of 64 see https://twitter.com/karpathy/status/1621578354024677377
-compile_model = True
-seed = 1337
-torch.manual_seed(seed) # seed the RNG for all devices (both CPU and CUDA)
-torch.cuda.manual_seed(seed)
+#compile_model = True
 
 model = TransformerModel(
     vocab_size=vocab_size,
@@ -47,20 +43,12 @@ model = TransformerModel(
     max_len=64
 )
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model.to(device)
-
-print("Device: ", device)
-
-print("Number of parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
-
 # model with torch.compile results in a significant speedup. Speedup mainly comes from reducing Python overhead and GPU read/writes, speedup may vary on factors such as model architecture and batch size. 
 # For example, if architecture is simple and the amount of data is large, then the bottleneck would be GPU compute and the observed speedup may be less significant.
 # Different speedup results depending on "mode". The "reduce-overhead" mode uses CUDA graphs to further reduce the overhead of Python. Experiment with different modes to maximize speedup. More: https://pytorch.org/get-started/pytorch-2.0/#user-experience
 # First few iterations torch.compile is significantly slower than the other runs, although it is much faster than the first run. This is because the "reduce-overhead" mode runs a few warm-up iterations for CUDA graphs.
-if compile_model:
-    # make sure not to have copy/deepcopy -> throws /bin/ld: skipping incompatible /usr/lib/libcuda.so when searching for -lcuda
-    model = torch.compile(model) # 25% faster and allows for more batch size 
+#if compile_model:
+    #model = torch.compile(model, mode="reduce-overhead")
 
 
 train_data = torch.load("/gpfs/project/flkar101/transformer_project/data/train_dataset.pt")
@@ -71,10 +59,17 @@ tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_pr
 train_dataset = MyDataset(train_data)
 val_dataset = MyDataset(val_data)
 
-#trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 100000))
+#trainset_1 = torch.utils.data.Subset(train_dataset, range(0, 1000000))
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, collate_fn=collate)
 #valset_1 = torch.utils.data.Subset(val_dataset, range(0, 1000))
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, collate_fn=collate)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+print("Device: ", device)
+
+print("Number of parameters: ", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
 optimizer_grouped_parameters = [
     {'params': [param for name, param in model.named_parameters()
@@ -83,15 +78,13 @@ optimizer_grouped_parameters = [
                 if 'bias' not in name and 'layer_norm' not in name], 'weight_decay': 0.01}
 ]
 
-
 # small batches use lr = 0.5 and large batches use lr = 1.0 -> finding verified by https://arxiv.org/pdf/1806.00187.pdf
-# setting lr=1.0 corresponds to max lr of 7e-4 for adamw (for very many steps ~400k-500k, make sure to set min lr to 7e-5 as per Chincilla from DeepMind)
-optimizer = AdamW(optimizer_grouped_parameters, lr=1.0, betas=(0.9, 0.98), eps=1e-09, weight_decay=0.01, fused=False) # fused=True leads to unscaling the gradients twice https://github.com/pytorch/pytorch/issues/90752
-accumulation_steps = 8 # simulating training on this number of gpu nodes (8 for 1024 batch size, 16 for 512 batch size)
+optimizer = AdamW(optimizer_grouped_parameters, lr=1.0, betas=(0.9, 0.98), eps=1e-09, weight_decay=0.01, fused=True)
+accumulation_steps = 16 # simulating training on this number of gpu nodes (8 for 1024 batch size, 16 for 512 batch size)
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000)
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=label_smoothing)
 
-def validation(model, val_loader, src_pad_idx, device):
+def validation(model, val_loader, src_pad_idx, vocab_size, device):
     print("Validation processing...")
     model.eval()
     valid_losses = []
@@ -101,15 +94,15 @@ def validation(model, val_loader, src_pad_idx, device):
             src_input, tgt_input, tgt_output = batch['src_input'], batch['tgt_input'], batch['tgt_output']
             src_input, tgt_input, tgt_output = src_input.to(device), tgt_input.to(device), tgt_output.to(device)
 
-            enc_attn_mask, dec_attn_mask = make_mask(src_input, tgt_input, src_pad_idx)
-            enc_attn_mask, dec_attn_mask = enc_attn_mask.to(device), dec_attn_mask.to(device)
+            e_mask, d_mask = make_mask(src_input, tgt_input, src_pad_idx)
+            e_mask, d_mask = e_mask.to(device), d_mask.to(device)
 
-            output = model(src=src_input, tgt=tgt_input, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)
+            output = model(src_input, e_mask, tgt_input, d_mask)
 
-            loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
+            loss = criterion(output.view(-1, vocab_size), tgt_output.view(-1))
 
             valid_losses.append(loss.item())
-            del src_input, tgt_input, tgt_output, enc_attn_mask, dec_attn_mask, output
+            del src_input, tgt_input, tgt_output, e_mask, d_mask, output
 
     mean_valid_loss = np.mean(valid_losses)
     msg = f"Validation loss: {mean_valid_loss:.3f}"
@@ -130,16 +123,16 @@ for epoch in range(num_epochs):
     pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
     for i, batch in enumerate(pbar):
         src_input, tgt_input, tgt_output = batch['src_input'], batch['tgt_input'], batch['tgt_output']
-        enc_attn_mask, dec_attn_mask = make_mask(src_input, tgt_input, src_pad_idx)
+        e_mask, d_mask = make_mask(src_input, tgt_input, src_pad_idx)
 
         src_input, tgt_input, tgt_output = src_input.to(device), tgt_input.to(device), tgt_output.to(device)
-        enc_attn_mask, dec_attn_mask = enc_attn_mask.to(device), dec_attn_mask.to(device)
+        e_mask, d_mask = e_mask.to(device), d_mask.to(device)
 
-        optimizer.zero_grad(set_to_none=True) if i % accumulation_steps == 0 else None # set_to_none=True here can modestly improve performance
+        # TODO: check if set_to_none=True has any sideeffects, if yes, remove it
+        optimizer.zero_grad(set_to_none=True) if i % accumulation_steps == 0 else None
 
-        # Switching to torch.bfloat16 from fp16 can resolve overflow issues during training due to its significantly larger dynamic range, despite sacrificing a bit of precision.
         with autocast(dtype=torch.float16):
-            output = model(src=src_input, tgt=tgt_input, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)
+            output = model(src_input, tgt_input, e_mask, d_mask)
             loss = criterion(output.view(-1, output.size(-1)), tgt_output.view(-1))
 
         scaler.scale(loss).backward()
@@ -149,7 +142,7 @@ for epoch in range(num_epochs):
 
             # gradient clipping
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
             scaler.step(optimizer)
             scaler.update()
@@ -161,7 +154,7 @@ for epoch in range(num_epochs):
         pbar.set_postfix({'loss': round(loss.item(), 2), 'lr': round(lr_scheduler.get_last_lr()[0], 10)})
     
     loss_curr_epoch = np.mean(loss_epoch)
-    valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, device)
+    valid_loss_curr_epoch = validation(model, val_loader, src_pad_idx, vocab_size, device)
 
     msg = (f'| epoch {epoch+1}/{num_epochs} | train loss: {loss_curr_epoch:.3f} ' 
            f'| validation loss: {valid_loss_curr_epoch:.3f} | ppl: {np.exp(loss_curr_epoch):.2f} |')
@@ -179,7 +172,6 @@ for epoch in range(num_epochs):
         state_dict = {
             'model_state_dict': model.state_dict(),
             'optim_state_dict': optimizer.state_dict(),
-            'scaler_state_dict': scaler.state_dict(),
             'loss': best_loss
         }
         torch.save(state_dict, "/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_base_test.pth")

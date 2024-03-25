@@ -9,6 +9,7 @@ from utils import collate
 from tqdm import tqdm
 
 def generate_translation(device, model, src_input, tokenizer, max_len=64):
+    max_len += 50 # paper: We set the maximum output length during inference to input length + 50, but terminate early when possible
     model.eval()
 
     bos_token_id = tokenizer.convert_tokens_to_ids("[BOS]")
@@ -34,12 +35,34 @@ def generate_translation(device, model, src_input, tokenizer, max_len=64):
 
         tgt_input[i+1] = word_id
 
+        # terminate early if possible
         if word_id == eos_token_id:
             break
 
 
     return tgt_input
 
+d_model = 512
+dim_feedforward = 4*d_model
+# Always but most efficient with multiples of 8; on A100, multiples of 64.
+# Table 1. https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html
+vocab_size = 50048 # nearest multiple of 64 see https://twitter.com/karpathy/status/1621578354024677377
+compile_model = True
+seed = 1337
+torch.manual_seed(seed) # seed the RNG for all devices (both CPU and CUDA)
+torch.cuda.manual_seed(seed)
+
+model = TransformerModel(
+    vocab_size=vocab_size,
+    d_model=d_model,
+    n_heads=8,
+    num_encoder_layers=6,
+    num_decoder_layers=6,
+    dim_feedforward=dim_feedforward,
+    dropout=0.1,
+    max_len=64
+)
+"""
 model = TransformerModel(
     vocab_size=50048,
     d_model=512,
@@ -49,13 +72,21 @@ model = TransformerModel(
     dim_feedforward=2048,
     dropout=0.1,
     max_len=64
-)
+)"""
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+# important to compile model if loaded model was compiled, 
+# see https://discuss.pytorch.org/t/how-to-save-load-a-model-with-torch-compile/179739
+if compile_model:
+    model = torch.compile(model)
+
 
 checkpoint = torch.load("/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_base_test.pth")
+
 model.load_state_dict(checkpoint['model_state_dict'])
-model.to(device)
+
 
 tokenizer = GPT2Tokenizer.from_pretrained("/gpfs/project/flkar101/transformer_project/gpt2_from_bpe")
 
