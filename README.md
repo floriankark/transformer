@@ -28,15 +28,31 @@ Below you can find my written report to the code and course which I highly recom
 | 14   | 01.03.2024    | Deadline of written report                             |  
 | 14   | 09.04.2024    | Oral presentation in person                            | 
 
-Report Guidelines:
+## Report
+
+**Report Guidelines:**
 **Word Limit:** The report should not exceed 2500 words.
 **Page Limit:** The report must be a maximum of 8 pages.
 
+[Report](Report.pdf)
+
 Unfortunately, my code was prone to the vanishing gradients problems in fp16 training which I was eventually able to fix but as you might have read, a little to late for the written report. If you are interested, have a look at the presentation slides to get a gist of the problem and see the great results.
+
+## Presentation
 
 **Presentation Guidelines:**
 Prepare a 10-minute presentation highlighting the most important aspects of your report.
 The presentation should focus on key insights, challenges, and outcomes from your project.
+
+[Presentation](Presentation.pdf)
+
+## Result
+
+The model is trained on the standard WMT 2017 English-German dataset1 consisting of about 6 million sentence pairs. 
+The Sentence pairs were truncated to a maximum sequence length of 64.
+
+![image](Loss.png)
+For more on the results have a look at the presentation slides and report.
 
 
 *Yes, I implemented both, Pre-LN, as described in the paper, and Post-LN, as later updated in the official code; even tested some other constellations
