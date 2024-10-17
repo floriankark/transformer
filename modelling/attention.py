@@ -43,12 +43,12 @@ class MultiHeadAttention(nn.Module):
         self.attn_drop = dropout
         self.resid_drop = nn.Dropout(dropout)
 
-        self._reset_parameters()
+        """self._reset_parameters()
 
     def _reset_parameters(self) -> None:
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                nn.init.xavier_uniform_(p)"""
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, 
                 attn_mask: Optional[torch.Tensor] = None, mask_future: bool = False) -> torch.Tensor:

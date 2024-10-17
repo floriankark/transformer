@@ -4,8 +4,8 @@ import numpy as np
 
 
 # Laden Sie die Daten
-train_loss = np.load('results/loss_list.npy')
-valid_loss = np.load('results/valid_loss_list.npy')
+train_loss = np.load('/Users/floriankark/Downloads/loss_list.npy')
+valid_loss = np.load('/Users/floriankark/Downloads/valid_loss_list.npy')
 
 # Erstellen Sie ein Array mit der gleichen Länge wie train_loss für die x-Werte der Validierungsverluste
 x_valid = np.linspace(0, len(train_loss)-1, num=len(valid_loss))
@@ -36,7 +36,7 @@ from nltk.translate.bleu_score import sentence_bleu
 from nltk.tokenize import word_tokenize
 
 # Laden Sie die Daten
-with open('results/translations_base_test.json') as f:
+with open('/Users/floriankark/Downloads/translations_base_test.json') as f:
     data = json.load(f)
 
 # Liste zur Speicherung der BLEU-Scores

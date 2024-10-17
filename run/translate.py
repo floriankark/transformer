@@ -8,8 +8,8 @@ import torch.nn.functional as F
 from utils import collate
 from tqdm import tqdm
 
-def generate_translation(device, model, src_input, tokenizer, max_len=64):
-    max_len += 50 # paper: We set the maximum output length during inference to input length + 50, but terminate early when possible
+def generate_translation(device, model, src_input, tokenizer, max_len):
+    #max_len += 50 # paper: We set the maximum output length during inference to input length + 50, but terminate early when possible
     model.eval()
 
     bos_token_id = tokenizer.convert_tokens_to_ids("[BOS]")
@@ -21,24 +21,29 @@ def generate_translation(device, model, src_input, tokenizer, max_len=64):
 
     tgt_input = torch.tensor([bos_token_id] + [src_pad_id] * (max_len - 1))
     tgt_input = tgt_input.to(device)
-
+    j = 0
     for i in range(max_len-1):
-        d_mask = (tgt_input.unsqueeze(0) != src_pad_id).int()
+        # very rudimentary way to get a 64 token sliding window (TODO: refactor)
+        if i >= 63: # 64 is context window size
+            j += 1
+            tgt_in = tgt_input[-64:]
+        else:
+            tgt_in = tgt_input[:64]
+        d_mask = (tgt_in.unsqueeze(0) != src_pad_id).int()
         d_mask = d_mask.to(device)
 
         with torch.no_grad():
-            output = model(src_input, tgt_input.unsqueeze(0), e_mask, d_mask)
+            output = model(src_input, tgt_in.unsqueeze(0), e_mask, d_mask)
 
         output = F.softmax(output, dim=-1)
         output = torch.argmax(output, dim=-1)
-        word_id = output[0][i].item()
+        word_id = output[0][i-j].item()
 
         tgt_input[i+1] = word_id
 
         # terminate early if possible
         if word_id == eos_token_id:
             break
-
 
     return tgt_input
 
@@ -51,6 +56,7 @@ compile_model = True
 seed = 1337
 torch.manual_seed(seed) # seed the RNG for all devices (both CPU and CUDA)
 torch.cuda.manual_seed(seed)
+max_len = 64 #+ 50 # paper: We set the maximum output length during inference to input length + 50, but terminate early when possible
 
 model = TransformerModel(
     vocab_size=vocab_size,
@@ -102,7 +108,7 @@ for batch in pbar:
     src_input, tgt_output = batch['src_input'], batch['tgt_output']
     src_input, tgt_output = src_input.to(device), tgt_output.to(device)
 
-    translation = generate_translation(device, model, src_input, tokenizer)
+    translation = generate_translation(device, model, src_input, tokenizer, max_len=max_len)
 
     translation = translation[1:].tolist()
 

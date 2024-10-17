@@ -1,4 +1,4 @@
-import torch
+bimport torch
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 from torch.optim import AdamW
@@ -92,6 +92,13 @@ accumulation_steps = 8 # simulating training on this number of gpu nodes (8 for 
 lr_scheduler = TransformerLRScheduler(optimizer, d_model=d_model, warmup_steps=4000)
 criterion = CrossEntropyLoss(ignore_index=src_pad_idx, label_smoothing=label_smoothing)
 
+"""
+def average(model, models):
+"Average models into model"
+for ps in zip(*[m.params() for m in [model] + models]):
+    p[0].copy_(torch.sum(*ps[1:]) / len(ps[1:]))
+"""
+
 def validation(model, val_loader, src_pad_idx, device):
     print("Validation processing...")
     model.eval()
@@ -184,4 +191,4 @@ for epoch in range(num_epochs):
             'loss': best_loss
         }
         torch.save(state_dict, "/gpfs/project/flkar101/transformer_project/results/best_val_loss_model_base_test.pth")
-        print("Best checkpoint is saved with epoch = ", epoch)
+        print("Best checkpoint is saved with epoch = ", epoch+1)

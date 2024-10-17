@@ -203,13 +203,20 @@ class TransformerModel(nn.Module):
 
         self.linear = nn.Linear(d_model, vocab_size, bias=False)
 
-        self._reset_parameters()
+        self.apply(self._reset_parameters)
         self._tie_weights()
 
-    def _reset_parameters(self):
+    """def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+                nn.init.xavier_uniform_(p)"""
+    
+    def _reset_parameters(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+
     
     def _tie_weights(self):
         self.src_embed.lut.weight = self.tgt_embed.lut.weight
@@ -225,3 +232,53 @@ class TransformerModel(nn.Module):
         x_dec = self.decoder(x_dec, x_enc, enc_attn_mask=enc_attn_mask, dec_attn_mask=dec_attn_mask)
 
         return self.linear(x_dec)
+
+def uniform_unit_scaling_initializer(tensor: torch.Tensor, nonlinearity: str = "linear") -> torch.Tensor:
+    """
+    Initalizer which preserves output variance (i.e. doesn't scale variance) for 
+    approximately gaussian distributed inputs.
+
+    When initializing a deep network, it is in principle advantageous to keep
+    the scale of the input variance constant, so it does not explode or diminish
+    by reaching the final layer. If the input is `x` and the operation `x * W`,
+    and we want to initialize `W` uniformly at random, we need to pick `W` from
+
+    [-sqrt(3) / sqrt(dim), sqrt(3) / sqrt(dim)]
+
+    to keep the scale intact, where `dim = W.shape[0]` (the size of the input).
+    A similar calculation for convolutional networks gives an analogous result
+    with `dim` equal to the product of the first 3 dimensions.  When
+    nonlinearities are present, we need to multiply this by a constant factor 
+    called `gain`. See (Sussillo et al., 2014) for deeper motivation.
+
+        for layer in self.encoder_layers:
+            x = layer(x, encoder_attention_mask)
+    Args:
+        tensor : `torch.Tensor`, required. 
+            The tensor to initialise.
+        nonlinearity : `str`, optional (default = `"linear"`)
+            The non-linearity which is performed after the projection that this
+            tensor is involved in. This must be the name of a function contained
+            in the `torch.nn.functional` package.
+            
+    References:
+        [Sussillo et al., 2014](https://arxiv.org/abs/1412.6558)
+        ([pdf](http://arxiv.org/pdf/1412.6558.pdf))
+    
+    See https://www.tensorflow.org/api_docs/python/tf/compat/v1/uniform_unit_scaling_initializer 
+    for the original code.
+    """
+    
+    size = 1.0
+    # Estimating input size is not possible to do perfectly, but we try.
+    # The estimate, obtained by multiplying all dimensions but the last one,
+    # is the right thing for matrix multiply and convolutions (see above)
+    for dimension in list(tensor.size())[:-1]:
+        size *= dimension
+
+    # Avoid errors when initializing zero-size tensors
+    size = max(1.0, size)
+    activation_scaling = torch.nn.init.calculate_gain(nonlinearity, tensor)
+    max_value = sqrt(3 / size) * activation_scaling
+
+    return tensor.data.uniform_(-max_value, max_value)
