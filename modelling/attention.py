@@ -26,7 +26,7 @@ def scaled_dot_product_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tens
         attn_weight = attn_weight.masked_fill(attn_mask == 0, float(-1e4))
 
     attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, p=dropout, train=True)
+    attn_weight = torch.dropout(attn_weight, p=dropout)
     return attn_weight @ v
 
 
